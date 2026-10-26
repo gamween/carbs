@@ -459,6 +459,13 @@ err_t handle_array_field(parseContext_t* context, field_t* field) {
     if (field->id != ARR_END) {
         // Begin array
         CHECK(check_not_nested(context));
+        if (field->id == XRP_STARRAY_RAW_TRANSACTIONS &&
+            context->transaction_type != TRANSACTION_BATCH) {
+            // Read before the top-level TransactionType: its objects are
+            // not counted as inner transactions, so a later RawTransactions
+            // array must not be accepted either (begin_batch_array()).
+            context->batch.has_raw_transactions = true;
+        }
         if (context->transaction_type == TRANSACTION_BATCH) {
             CHECK(begin_batch_array(context, field));
         }
@@ -718,11 +725,12 @@ static bool is_zero_xrp_amount(const field_t* field) {
            memcmp(field->data.ptr, ZERO_XRP_AMOUNT, XRP_AMOUNT_LEN) == 0;
 }
 
-// Records an inner transaction's type and flags. What the protocol fixes in
-// an inner transaction is hidden from the review (is_batch_fixed_field), so
-// it must hold: Fee 0, empty SigningPubKey, no signature, and Flags carrying
-// tfInnerBatchTxn (dropped from the display, never from the signed bytes).
-// Anything else sends the Batch to blind signing.
+// Records an inner transaction's type, flags and account. What the protocol
+// fixes in an inner transaction is hidden from the review
+// (is_batch_fixed_field), so it must hold: Fee 0, empty SigningPubKey, no
+// signature, and Flags carrying tfInnerBatchTxn (dropped from the display,
+// never from the signed bytes). Anything else sends the Batch to blind
+// signing.
 static err_t check_batch_inner_field(parseContext_t* context, field_t* field) {
     err_t err;
     err.err = SUCCESS;
@@ -755,6 +763,11 @@ static err_t check_batch_inner_field(parseContext_t* context, field_t* field) {
             valid = (field->id != XRP_VL_SIGNING_PUB_KEY ||
                      field->length == 0) &&
                     field->id != XRP_VL_TXN_SIGNATURE;
+            break;
+        case STI_ACCOUNT:
+            if (field->id == XRP_ACCOUNT_ACCOUNT) {
+                inner->has_account = true;
+            }
             break;
         default:
             break;
@@ -1032,8 +1045,9 @@ err_t post_process_transaction(parseContext_t* context) {
 
 // A Batch is clear-signed only when every inner transaction can be shown in
 // full (FIANSO-SPEC 7.4): a node-valid count of inner transactions, each of
-// a supported type and marked tfInnerBatchTxn, exactly one outer mode, and
-// no inner flag bit the review cannot name.
+// a supported type, marked tfInnerBatchTxn and naming its Account, exactly
+// one outer mode, no inner flag bit the review cannot name, and no row that
+// is not an outer field, an outer memo or part of an inner transaction.
 static err_t check_batch(parseContext_t* context) {
     err_t err;
     err.err = BLIND_SIGN_REQUIRED;
@@ -1046,7 +1060,7 @@ static err_t check_batch(parseContext_t* context) {
     }
 
     for (uint8_t i = 0; i < batch->inner_count; ++i) {
-        if (!batch->inner[i].has_inner_flag ||
+        if (!batch->inner[i].has_inner_flag || !batch->inner[i].has_account ||
             !is_supported_batch_inner_type(batch->inner[i].transaction_type)) {
             return err;
         }
@@ -1062,6 +1076,16 @@ static err_t check_batch(parseContext_t* context) {
     for (uint8_t i = 0; i < context->result.num_fields; ++i) {
         field_t* field = &context->result.fields[i];
         batchInnerTx_t* inner = batch_inner_tx(context, field);
+        // A field of RawTransactions outside a RawTransaction object, or a
+        // Vector256 entry, would be shown under an index that names no
+        // inner transaction.
+        bool outer =
+            field->array_info.type == ARRAY_NONE && field->object_depth == 0;
+        bool outer_memo = field->array_info.type == XRP_STARRAY_MEMOS &&
+                          field->object_depth == 1;
+        if (inner == NULL && !outer && !outer_memo) {
+            return err;
+        }
         if (inner != NULL && field->data_type == STI_UINT32 &&
             field->id == XRP_UINT32_FLAGS &&
             has_unknown_flags(inner->transaction_type, field->data.u32)) {
