@@ -34,7 +34,7 @@ export interface WalletsState {
 }
 
 export const STAX_NEEDS_LIVE_NODE =
-  "Pick Local node or Team node under Node, at the top: the real Stax signs for a node that has the amendment, not for the simulation.";
+  "Pick Local node or Team node under Node, at the top: the real Stax signs for a node with the SigningSessions amendment, not for the simulation.";
 
 const PASSKEY_UNAVAILABLE =
   "WebAuthn needs a browser with passkeys and a secure context (https or localhost).";

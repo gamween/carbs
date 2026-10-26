@@ -246,7 +246,7 @@ async function useFixture(value: string): Promise<void> {
         </template>
       </div>
       <p v-if="readOnly" class="text-muted-foreground" data-testid="read-only">
-        Mainnet is read-only here: the migration runs on the AlphaNet, on a fresh account.
+        Mainnet is read-only here: the migration runs on the AlphaNet.
       </p>
       <template v-else>
         <p class="text-sm text-muted-foreground">
@@ -260,8 +260,21 @@ async function useFixture(value: string): Promise<void> {
           data-testid="migration-start"
           @click="migration.start()"
         >
-          Start with a fresh AlphaNet account
+          {{
+            realDevice
+              ? "Start with this Stax's AlphaNet account"
+              : "Start with a fresh AlphaNet account"
+          }}
         </button>
+        <p
+          v-if="realDevice && !mstate.address"
+          class="text-sm text-muted-foreground"
+          data-testid="stax-account-note"
+        >
+          The account is the Stax's own address: the same device always gives the same AlphaNet
+          account, so a Stax already migrated there cannot run this again (its master key is
+          disabled).
+        </p>
         <template v-if="mstate.address">
           <p class="mono" data-testid="migration-address">
             <ExplorerLink

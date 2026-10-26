@@ -205,7 +205,7 @@ async function createFor(host: WalletHost, profile: Profile, adapterName: string
 
 /**
  * The real Ledger Stax over USB, through the Device Management Kit (WebHID). Only on a live
- * node: the Stax signs for a node that has the amendment. The connection runs first, inside
+ * node: the Stax signs for a node with the SigningSessions amendment. The connection runs first, inside
  * the click that opened it, since WebHID's device picker needs that gesture.
  */
 export class LedgerStaxUsbAdapter extends CarbsAdapter {

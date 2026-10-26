@@ -33,7 +33,7 @@ export const LEDGER_STAX_USB: WalletDescription = {
   signs: [
     "Master key (secp256k1, on the Stax): SetRegularKey and asfDisableMaster, during setup",
     "ML-DSA-44 key (on the Stax): everything the account's own authority signs, sessions included",
-    "Session key (ML-DSA-44, made in the page): the transactions inside its session, no prompt",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
   ],
   summary:
     "Your Stax over USB, with the XRP app open. Every own-authority transaction is read and confirmed on its screen, through the Device Management Kit. The account is the Stax's own: one already set up is used as it is.",
@@ -49,7 +49,7 @@ export const LEDGER_STAX_SIMULATED: WalletDescription = {
   signs: [
     "Master key (secp256k1, simulated Stax): SetRegularKey and asfDisableMaster, during setup",
     "ML-DSA-44 key (simulated Stax): everything the account's own authority signs, sessions included",
-    "Session key (ML-DSA-44, made in the page): the transactions inside its session, no prompt",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
   ],
   summary:
     "No device: a software double of the Stax shows its review in this page. New keys, so a new account, at each connection.",
@@ -60,14 +60,14 @@ export const LEDGER_STAX_SIMULATED: WalletDescription = {
 export const PASSKEY_MAC: WalletDescription = {
   id: "passkey-mac",
   name: "Passkey (this Mac)",
-  keyType: "P-256 passkey (WebAuthn); not post-quantum",
+  keyType: "P-256 passkey (WebAuthn, this browser's authenticator); not post-quantum",
   signs: [
     "Master key (secp256k1, in the page): PasskeyListSet, once, during setup",
     "Passkey (Touch ID or Face ID): opens sessions and signs what the account's own authority signs",
     "Session key (P-256, non-extractible): the transactions inside its session, no prompt",
   ],
   summary:
-    "A passkey has full authority and cannot be replaced or removed once registered, so this account is not post-quantum.",
+    "The P-256 passkey has full authority and cannot be replaced or removed once registered, so this account is not post-quantum. ML-DSA-44 passkeys (PasskeyMLDSA) are not made here.",
   simulatedWhenBackendSimulated: ["node"],
   alwaysSimulated: [],
 };
@@ -78,7 +78,7 @@ export const DEMO_ACCOUNT: WalletDescription = {
   keyType: "secp256k1 master key, in memory, thrown away on reload",
   signs: [
     "Master key (in the page): everything the account's own authority signs",
-    "Session key (P-256): the transactions inside its session, no prompt",
+    "Session key (P-256, non-extractible): the transactions inside its session, no prompt",
   ],
   summary: "A throw-away account to try the screens. Nothing is kept.",
   // On a live node the account is real (funded by its faucet); only its key is thrown away.

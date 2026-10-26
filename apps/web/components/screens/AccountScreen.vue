@@ -31,14 +31,14 @@ const PROFILES = computed<readonly { id: Profile; title: string; body: string; n
     {
       id: "mac",
       title: "Mac account",
-      body: "Keeps its master key and has a passkey. The passkey opens sessions; the session key is a non-extractible P-256 key.",
-      note: "Not post-quantum: a passkey has full authority and cannot be replaced or removed.",
+      body: "Keeps its master key and has a P-256 passkey from this browser's authenticator. The passkey opens sessions; the session key is a non-extractible P-256 key.",
+      note: "Not post-quantum: the P-256 passkey has full authority, its public key is on the ledger, and a passkey list cannot be replaced or removed. The node also takes ML-DSA-44 passkeys (PasskeyMLDSA), which a Stax running the carbs Security Key app can hold; this page does not make them.",
     },
     {
       id: "ledger",
       title: "Ledger account",
       body: `Master key disabled, the device's ML-DSA-44 key as regular key, never a passkey. Every own-authority transaction is ${ledgerSigner.value}.`,
-      note: "Post-quantum root. Each transaction carries a 1 312-byte key and a 2 420-byte signature.",
+      note: "Post-quantum root: ML-DSA-44 in the XRP app, without side-channel countermeasures yet. Each transaction carries a 1 312-byte key and a 2 420-byte signature. Session keys are ML-DSA-44 keys made in this page, in memory (WebCrypto has no ML-DSA, so they are extractible).",
     },
   ],
 );

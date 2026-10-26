@@ -38,6 +38,17 @@ describe("Account screen", () => {
     expect(wrapper.get("[data-testid='reserve']").text()).toBe("not reported by the node");
   });
 
+  it("says the Mac account's passkey is P-256, not that every passkey is", () => {
+    const { wrapper } = mountScreen(AccountScreen);
+    const mac = wrapper.get("[data-testid='profile-mac']").text();
+    expect(mac).toContain("P-256 passkey");
+    expect(mac).toContain("ML-DSA-44 passkeys (PasskeyMLDSA)");
+    expect(mac).toContain("this page does not make them");
+    const ledger = wrapper.get("[data-testid='profile-ledger']").text();
+    expect(ledger).toContain("without side-channel countermeasures");
+    expect(ledger).toContain("extractible");
+  });
+
   it("does not claim device signing for the simulated Stax", () => {
     const { wrapper } = mountScreen(AccountScreen);
     const ledger = wrapper.get("[data-testid='profile-ledger']").text();
