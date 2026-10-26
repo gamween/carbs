@@ -378,6 +378,12 @@ static const char* session_never_blind_testcases[] = {
     // ...or outer Memos filling the field budget before a SigningSessionSet.
     "../../tests/standalone/testcases/32-batch/"
     "06-session-after-field-limit.raw",
+    // Upstream's 01-two-payments preceded by a stray RawTransactions array,
+    // read before the top-level TransactionType (no .json): the real array
+    // is then refused, and its fields would otherwise show as rows of the
+    // inner transactions.
+    "../../tests/standalone/testcases/32-batch/"
+    "10-raw-transactions-before-type.raw",
     NULL,
 };
 
@@ -386,6 +392,15 @@ static const char* session_never_blind_testcases[] = {
 static const char* batch_blind_testcases[] = {
     // TicketCreate is not an inner type the review supports.
     "../../tests/standalone/testcases/32-batch/03-unsupported-inner-type.raw",
+    // An inner Payment without an Account.
+    "../../tests/standalone/testcases/32-batch/07-inner-without-account.raw",
+    // 01-two-payments of upstream's format with an Amount of XRP 10 spliced
+    // into RawTransactions between the two RawTransaction objects (no .json):
+    // its row would read "Amount [1]", as if it belonged to the first one.
+    "../../tests/standalone/testcases/32-batch/"
+    "08-field-outside-raw-transaction.raw",
+    // NFTokenOffers (a Vector256) on the outer Batch.
+    "../../tests/standalone/testcases/32-batch/09-outer-nftoken-offers.raw",
     NULL,
 };
 

@@ -951,3 +951,30 @@ Owner request: the web app follows the XRPL Commons look (an XRPL showcase app w
   - PRF with a real Touch ID was never run;
   - the team node keeps 10 XRP and 2 XRP until it restarts from a fresh ledger with the new cfg;
   - `pnpm --filter web lint` reports 3 errors in files these commits did not touch.
+
+## 2026-10-26: the device blind-signs or refuses a Batch with a row outside its inner transactions
+
+- **Found while preparing the upstream Batch pull request.** That version's review checks were run against this app's parser on 226 vectors. Eight malformed Batches still clear-signed here:
+  - an inner Payment without an `Account`;
+  - fields put straight into `RawTransactions`, outside any `RawTransaction` object. An `Amount` of 10 XRP between the two inner transactions was shown as `Amount [1]`, as if it belonged to the first one;
+  - `NFTokenOffers` on the outer Batch;
+  - a stray `RawTransactions` array placed before the top-level `TransactionType`. Its objects were not counted, but their fields were shown as rows of the real inner transactions: a second `Amount [2]` of 10 XRP.
+
+  rippled rejects all eight, but the screen must never mislabel a row.
+
+- **Fix** (`check_batch`, `check_batch_inner_field`, `handle_array_field`):
+  - every inner transaction names its `Account`;
+  - every row is an outer field, an outer memo or a field of one inner transaction;
+  - a `RawTransactions` array read before the type counts as the Batch's one array, so a second one stops the parse.
+
+  The first two cases go to blind signing. The third is refused, like any Batch whose parsing stops early (it might hold a session).
+
+- **Tests:**
+  - `32-batch/07-inner-without-account`, `08-field-outside-raw-transaction` and `09-outer-nftoken-offers` are in `batch_blind_testcases`;
+  - `10-raw-transactions-before-type` is in `session_never_blind_testcases`;
+  - 08 and 10 are spliced by hand and have no `.json`.
+
+  Without the change, `test_batch_blind_required` and `test_session_never_blind` fail. With it, 5/5 suites pass. A native parse of the 226 vectors, before and after the change, differs on 17 malformed Batches only. The review of every valid transaction is unchanged.
+
+- **Ragger on Speculos (Stax):** 144 passed, 45 skipped, no snapshot changed. The four new vectors are skipped there, like the other Batch vectors that must not clear-sign.
+- **Not done:** the other four devices; not loaded on the Stax (the reload of the fixed app is still pending).

@@ -324,6 +324,10 @@ def test_sign_valid_tx(
         "04-inner-fee-not-zero.raw",
         "05-memos-in-inner.raw",
         "06-session-after-field-limit.raw",
+        "07-inner-without-account.raw",
+        "08-field-outside-raw-transaction.raw",
+        "09-outer-nftoken-offers.raw",
+        "10-raw-transactions-before-type.raw",
     ):
         if raw_tx_path.endswith(f"32-batch/{name}"):
             pytest.skip(f"skip Batch tx that must not clear-sign: '{Path(raw_tx_path).stem}'")

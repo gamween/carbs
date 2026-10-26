@@ -39,6 +39,7 @@
 typedef struct {
     uint16_t transaction_type;  // TRANSACTION_INVALID until read
     bool has_inner_flag;        // its Flags carried tfInnerBatchTxn
+    bool has_account;           // it named its Account
 } batchInnerTx_t;
 
 typedef struct {
