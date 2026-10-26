@@ -17,7 +17,7 @@ import {
 } from "./apdu.js";
 import { getMlDsaPublicKey, signMlDsa } from "./commands.js";
 import { ledgerDevice, type DmkSession } from "./device.js";
-import { describeLedgerError } from "./ledger-error.js";
+import { describeLedgerError, kSwOs } from "./ledger-error.js";
 
 const kSessionId = "session-1";
 /** Long enough for three `0x11` chunks: 255, 255, then 90 bytes. */
@@ -121,10 +121,43 @@ describe("describeLedgerError", () => {
   it("explains the status word of a DMK error, its own or the one it wraps", () => {
     expect(
       describeLedgerError({ _tag: "DeviceLockedError", errorCode: "5515", message: "x" }),
-    ).toBe("the device is locked (0x5515)");
+    ).toBe("the device is locked: unlock it, then open the XRP app on the Stax (0x5515)");
     expect(
       describeLedgerError({ _tag: "UnknownDAError", originalError: { errorCode: "6D00" } }),
-    ).toBe("the XRP app does not know this instruction (wrong app version?) (0x6d00)");
+    ).toBe(
+      "the open app does not know this instruction: open the XRP app on the Stax (an XRP app without the carbs ML-DSA-44 commands answers this too) (0x6d00)",
+    );
+  });
+
+  it("says to open the XRP app when the dashboard or another app answers (0x650f)", () => {
+    // What the Stax answered with the Security Key app open; the command never reached the XRP app.
+    const message = describeLedgerError(new DeviceError(kSwOs.appNotOpen, kInsPqGetPublicKey));
+    expect(message).toBe(
+      "the XRP app is not open on the device (the dashboard or another app, such as Security Key, is): open the XRP app on the Stax (0x650f)",
+    );
+    expect(message).not.toContain("unknown");
+    expect(describeLedgerError({ _tag: "UnknownDAError", errorCode: "650f" })).toBe(message);
+  });
+
+  it.each([
+    [kSwOs.locked, "the device is locked: unlock it, then open the XRP app on the Stax (0x5515)"],
+    [kSw.claNotSupported, "the open app is not the XRP app: open the XRP app on the Stax (0x6e00)"],
+    [kSw.denied, "refused on the device (0x6985)"],
+    [kSw.sessionPolicyRefused, "blocked by your session policy on the device (0x6986)"],
+  ])("gives a sentence, not a bare code, for status word %i", (statusWord, sentence) => {
+    const message = describeLedgerError(new DeviceError(statusWord, kInsPqSign));
+    expect(message).toBe(sentence);
+    expect(message).not.toMatch(/unknown|device answered/);
+  });
+
+  it("explains the DMK errors that carry no status word", () => {
+    expect(describeLedgerError({ _tag: "DeviceLockedError", message: "Device is locked" })).toBe(
+      "the device is locked: unlock it, then open the XRP app on the Stax",
+    );
+    expect(describeLedgerError({ _tag: "NoAccessibleDeviceError", message: "x" })).toBe(
+      "no Ledger was picked: plug in the Stax, unlock it and choose it in the browser's list",
+    );
+    expect(describeLedgerError({ _tag: "RefusedByUserDAError" })).toBe("refused on the device");
   });
 
   it("falls back on the tag, code and message of a DMK error, never [object Object]", () => {

@@ -15,7 +15,7 @@ import {
 } from "@carbs/sessions";
 import type { AppNetwork } from "../networks";
 import type { Backend, DeviceApprover, ExposurePort } from "../ports";
-import type { PasskeySource } from "../wallets/adapters";
+import type { PrfSource } from "../wallets/prf";
 import { createLiveBuilders } from "./builders";
 import { createLiveDevice } from "./device";
 import {
@@ -33,7 +33,8 @@ export interface LiveBackendOptions {
   approver: () => DeviceApprover;
   /** Simulated device or real Stax; without it, the simulated device. */
   device?: DeviceSelection;
-  passkeys: PasskeySource;
+  /** The PRF passkey of the Mac account: the browser's, or the software double in tests. */
+  prf: PrfSource;
   exposure: ExposurePort;
   fetcher?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -63,7 +64,7 @@ export async function createLiveBackend(options: LiveBackendOptions): Promise<Ba
       createLiveDevice(defs, options.approver),
       defs,
     ),
-    wallet: new LiveWallet(defs, options.passkeys),
+    wallet: new LiveWallet(defs, options.prf),
     exposure: options.exposure,
     builders: createLiveBuilders(defs),
     counterparties: { sink: counterparty(), victim: counterparty() },

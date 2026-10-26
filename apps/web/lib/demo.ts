@@ -5,13 +5,14 @@
  * holds and what it logged.
  */
 import { reactive } from "vue";
-import { kBlackholeAddress } from "@carbs/sessions";
+import type { PqVault } from "@carbs/sessions";
 import { xrpToDrops } from "./format";
 import {
   DeviceRejectedError,
   type AccountInfo,
   type AccountObjects,
   type Backend,
+  type DeviceKey,
   type KeyHandle,
   type NodeResult,
   type SessionParams,
@@ -20,6 +21,16 @@ import {
   type SessionEntry,
   type TxJson,
 } from "./ports";
+import type { ChoiceStorage } from "./node-choice";
+import {
+  archiveVault,
+  clearSavedProfile,
+  newSavedProfile,
+  readSavedProfile,
+  writeSavedProfile,
+  type SavedKey,
+  type SavedProfile,
+} from "./saved-profile";
 import { ACTIONS, ATTACKS, type Attack, type ScenarioContext } from "./scenarios";
 
 /** The Actions and Attack logs keep this many entries. */
@@ -28,18 +39,56 @@ const MAX_LOG_ENTRIES = 50;
 export type Profile = "mac" | "ledger" | "demo";
 
 export const PROFILE_LABELS: Record<Profile, string> = {
-  mac: "Mac account",
+  mac: "Mac account (Touch ID)",
   ledger: "Ledger account",
   demo: "Demo account",
 };
 
-export interface CreateAccountOptions {
-  passkeyOnly?: boolean;
-  /** A passkey made elsewhere (the browser's authenticator); default: the wallet port's. */
-  passkey?: () => Promise<KeyHandle>;
-  /** Said in the setup step for that passkey. */
-  passkeyLabel?: string;
+/** Where the account is kept across reloads; without it, the account lasts for the page. */
+export interface DemoOptions {
+  /**
+   * The browser's storage (localStorage): the profile, and the Mac account's sealed vault, which
+   * opens only with the passkey's PRF secret. Never a key in clear.
+   */
+  storage?: ChoiceStorage | null;
+  /** The node the account lives on (its URL); a profile saved for another node is dropped. */
+  nodeKey?: string;
 }
+
+/** Said when the connected Stax is not the one the Ledger account was set up on. */
+export const OTHER_DEVICE_MESSAGE =
+  "This Stax holds other keys than the account's: connect the Stax this account was set up on.";
+
+const MAC_KEY_LABEL = "ML-DSA-44 key (sealed, opened by Touch ID)";
+
+/** The node answered, and the account saved in the browser no longer matches it. */
+class ProfileMismatch extends Error {}
+
+/** A Ledger account is set up when its master key is disabled and its regular key is the device's ML-DSA-44 key. */
+/**
+ * Whether the account's only authority is the ML-DSA-44 key at `mlDsaAddress`: master key
+ * disabled, that key as regular key, and no signer list or passkey that would keep another
+ * (classical) key in control. The node does not list delegates here; they are not checked.
+ */
+export function hasOnlyPostQuantumAuthority(
+  info: AccountInfo,
+  objects: AccountObjects,
+  mlDsaAddress: string,
+): boolean {
+  return (
+    info.masterDisabled &&
+    info.regularKey === mlDsaAddress &&
+    objects.signerList === null &&
+    objects.passkeys.length === 0
+  );
+}
+
+/**
+ * A Mac account's sealed key must survive a reload before its master key is disabled: without
+ * it the account would be locked for good.
+ */
+export const VAULT_NOT_KEPT_MESSAGE =
+  "This browser cannot keep the sealed ML-DSA-44 key (storage blocked or full): the master key was left enabled, so the account is not locked out.";
 
 /** Something that can sign for the account with full authority. */
 export interface Signer {
@@ -75,7 +124,6 @@ export interface DemoState {
   profile: Profile | null;
   /** The account is fully set up and can sign: the other screens wait for it. */
   ready: boolean;
-  passkeyOnly: boolean;
   address: string | null;
   info: AccountInfo | null;
   objects: AccountObjects | null;
@@ -91,11 +139,12 @@ export interface DemoState {
   error: string | null;
 }
 
-export function createDemo(backend: Backend) {
+export function createDemo(backend: Backend, options: DemoOptions = {}) {
+  const storage = options.storage ?? null;
+  const nodeKey = options.nodeKey ?? "";
   const state = reactive<DemoState>({
     profile: null,
     ready: false,
-    passkeyOnly: false,
     address: null,
     info: null,
     objects: null,
@@ -111,6 +160,8 @@ export function createDemo(backend: Backend) {
   });
   let counter = 0;
   let fullAuth: Signer | null = null;
+  /** The Mac account's sealed key, kept with the profile for a reload. */
+  let macVault: PqVault | null = null;
   let master: Signer | null = null;
   const { sink, victim } = backend.counterparties;
   const build = backend.builders;
@@ -237,22 +288,189 @@ export function createDemo(backend: Backend) {
     };
   }
 
-  async function createAccount(
-    profile: Profile,
-    options: CreateAccountOptions = {},
-  ): Promise<boolean> {
+  /**
+   * A key of the device. Before each signature it checks that the device still holds that
+   * key: another Stax (or a reset simulated one) would sign with a key the account does not know.
+   */
+  function deviceSigner(
+    algorithm: DeviceKey["algorithm"],
+    key: Pick<DeviceKey, "publicKey" | "address">,
+    label: string,
+  ): Signer {
+    return {
+      label,
+      algorithm,
+      publicKey: key.publicKey,
+      address: key.address,
+      onDevice: true,
+      async sign(tx) {
+        const held = await backend.device.getPublicKey(algorithm);
+        if (held.publicKey.toUpperCase() !== key.publicKey.toUpperCase()) {
+          throw new Error(OTHER_DEVICE_MESSAGE);
+        }
+        return backend.device.signTransaction(algorithm, tx);
+      },
+    };
+  }
+
+  async function readLedgerKeys(): Promise<{ classical: DeviceKey; pq: DeviceKey }> {
+    const classical = await backend.device.getPublicKey("secp256k1");
+    const pq = await backend.device.getPublicKey("mldsa44");
+    return { classical, pq };
+  }
+
+  async function createAccount(profile: Profile): Promise<boolean> {
     const done = await guarded(async () => {
-      reset();
+      // The account kept for a reload stays until the new one is saved over it: a cancelled or
+      // failed setup must not lose a Mac account's only sealed key.
+      reset({ keepSaved: true });
       state.profile = profile;
-      state.passkeyOnly = options.passkeyOnly === true;
-      if (profile === "mac") await setupMac(state.passkeyOnly, options);
+      if (profile === "mac") await setupMac();
       else if (profile === "ledger") await setupLedger();
       else await setupDemo();
       await refresh();
       state.ready = true;
+      save();
       return true;
     });
     return done === true;
+  }
+
+  /**
+   * The Ledger account already set up on this device, used as it is: the keys are read, the
+   * node is asked, nothing is funded or signed.
+   */
+  async function useExistingLedgerAccount(): Promise<boolean> {
+    const done = await guarded(async () => {
+      reset({ keepSaved: true });
+      state.profile = "ledger";
+      const { classical, pq } = await readLedgerKeys();
+      state.address = classical.address;
+      addStep("Read the device keys (secp256k1 and ML-DSA-44)").status = "ok";
+      const info = await backend.node.accountInfo(classical.address);
+      if (info === null) {
+        throw new Error(
+          "This device's account does not exist on this node yet: set it up first (Set up the Ledger account).",
+        );
+      }
+      const objects = await backend.node.accountObjects(classical.address);
+      if (!hasOnlyPostQuantumAuthority(info, objects, pq.address)) {
+        throw new Error(
+          "This device's account is not set up yet (its master key is enabled, its regular key is not the device's ML-DSA-44 key, or a signer list or passkey keeps another key in control): set it up first.",
+        );
+      }
+      addStep(
+        "This Stax's account is already set up (master key disabled, the device's ML-DSA-44 key as regular key): using it, nothing sent",
+      ).status = "ok";
+      master = deviceSigner("secp256k1", classical, "Device master key");
+      fullAuth = deviceSigner("mldsa44", pq, "Device ML-DSA-44 key");
+      await refresh();
+      state.ready = true;
+      save();
+      return true;
+    });
+    return done === true;
+  }
+
+  /* ---- the account across reloads (non-secret profile only) ---- */
+
+  function authorityKey(): SavedKey | null {
+    if (fullAuth === null || state.profile === null || state.profile === "demo") return null;
+    return { algorithm: "mldsa44", publicKey: fullAuth.publicKey, address: fullAuth.address };
+  }
+
+  /** The profile to keep for the account now, or null when nothing of it outlives the page. */
+  function savedNow(): SavedProfile | null {
+    const authority = authorityKey();
+    const address = state.address;
+    // The simulated ledger is gone with the page: nothing of it can be found again.
+    if (authority === null || address === null || backend.mode === "simulated") return null;
+    const ledger = state.profile === "ledger";
+    // A simulated Stax makes new keys at each load: nothing to find again.
+    if (ledger && backend.device.mode !== "live") return null;
+    if (!ledger && macVault === null) return null;
+    return newSavedProfile({
+      node: nodeKey,
+      profile: ledger ? "ledger" : "mac",
+      address,
+      device: ledger ? "usb" : null,
+      authority,
+      vault: ledger ? null : macVault,
+    });
+  }
+
+  /**
+   * Keep what a reload needs to find the account again: a real Stax's account, or a Mac account
+   * and its sealed vault. Never a demo account's key, never a session key. True when the
+   * profile reads back from the storage.
+   */
+  function save(): boolean {
+    const profile = savedNow();
+    if (storage === null || profile === null) return false;
+    const archived = profile.vault === null || archiveVault(storage, profile.vault);
+    writeSavedProfile(storage, profile);
+    const back = readSavedProfile(storage, nodeKey);
+    return archived && back !== null && JSON.stringify(back) === JSON.stringify(profile);
+  }
+
+  /**
+   * After a reload: the account saved for this node, checked against the node before it is
+   * used. Returns the profile it restored, or null (nothing saved for this node, or the node no
+   * longer agrees, which forgets it).
+   */
+  async function restore(): Promise<SavedProfile | null> {
+    const saved = readSavedProfile(storage, nodeKey);
+    if (saved === null) return null;
+    // Already restored, or another action is running: nothing to do.
+    if (state.ready && state.address === saved.address) return saved;
+    if (state.busy) return null;
+    state.busy = true;
+    try {
+      const info = await backend.node.accountInfo(saved.address);
+      if (info === null) throw new ProfileMismatch(`${saved.address} is not on this node any more`);
+      const objects = await backend.node.accountObjects(saved.address);
+      if (!hasOnlyPostQuantumAuthority(info, objects, saved.authority.address)) {
+        throw new ProfileMismatch(
+          `${saved.address} no longer has its ML-DSA-44 key as regular key with the master key disabled`,
+        );
+      }
+      let authority: Signer;
+      if (saved.profile === "ledger") {
+        authority = deviceSigner(
+          "mldsa44",
+          { publicKey: saved.authority.publicKey, address: saved.authority.address },
+          "Device ML-DSA-44 key",
+        );
+      } else {
+        if (saved.vault === null) throw new ProfileMismatch("the sealed key is missing");
+        const key = backend.wallet.openVaultKey(saved.vault);
+        // The backend derives the key's address from the sealed public key itself.
+        if (key.address !== saved.authority.address) {
+          throw new ProfileMismatch("the sealed key is not the account's regular key");
+        }
+        authority = signerFrom(key, MAC_KEY_LABEL);
+        macVault = saved.vault;
+      }
+      reset({ keepSaved: true, keepVault: true });
+      state.profile = saved.profile;
+      state.address = saved.address;
+      fullAuth = authority;
+      addStep(
+        saved.profile === "mac"
+          ? "Found again after the reload: this browser kept the address and the sealed ML-DSA-44 key, which Touch ID opens; the node holds the state"
+          : "Found again after the reload: this browser kept the address and the public key, the node holds the state",
+      ).status = "ok";
+      await refresh();
+      state.ready = true;
+      return saved;
+    } catch (error) {
+      // Forgotten only when the node answered and disagrees; a node that did not answer may later.
+      reset({ keepSaved: !(error instanceof ProfileMismatch) });
+      state.error = `The account kept in this browser was not restored: ${error instanceof Error ? error.message : String(error)}`;
+      return null;
+    } finally {
+      state.busy = false;
+    }
   }
 
   async function fund(address: string): Promise<void> {
@@ -273,80 +491,112 @@ export function createDemo(backend: Backend) {
     fullAuth = master;
   }
 
-  async function setupMac(passkeyOnly: boolean, options: CreateAccountOptions): Promise<void> {
+  /**
+   * The post-quantum Mac account: a master key in the page funds and hands the account to an
+   * ML-DSA-44 key sealed under the passkey's PRF secret, which proves itself, then the master
+   * key is disabled. No P-256 key reaches the ledger: the passkey is only the PRF oracle.
+   */
+  async function setupMac(): Promise<void> {
     const masterKey = await backend.wallet.createMasterKey();
-    master = signerFrom(masterKey, "Master key");
-    state.address = masterKey.address;
-    await fund(masterKey.address);
-    const passkey = options.passkey
-      ? await options.passkey()
-      : await backend.wallet.createPasskey();
-    addStep(
-      options.passkeyLabel ??
-        (backend.wallet.mode === "simulated"
-          ? "Create a passkey (SIMULATED: software authenticator, no prompt)"
-          : "Create a passkey"),
-    ).status = "ok";
-    await stepTx(
-      "PasskeyListSet, signed by the master key",
-      master,
-      build.passkeyListSet(masterKey.address, [
-        { publicKey: passkey.publicKey, credentialId: passkey.credentialId ?? "" },
-      ]),
-    );
-    if (passkeyOnly) {
+    master = signerFrom(masterKey, "Setup master key (secp256k1, in the page)");
+    const address = masterKey.address;
+    state.address = address;
+    const created = await backend.wallet.createVaultKey(address);
+    try {
+      addStep(
+        backend.wallet.prfSimulated
+          ? "Create the passkey and seal a new ML-DSA-44 key with its PRF secret (SIMULATED: software PRF, no Touch ID)"
+          : "Create the passkey and seal a new ML-DSA-44 key with its PRF secret (Touch ID twice)",
+      ).status = "ok";
+      macVault = created.vault;
+      await fund(address);
       await stepTx(
-        "SetRegularKey to the blackhole address, signed by the master key",
+        "SetRegularKey to the ML-DSA-44 key, signed by the master key",
         master,
-        build.setRegularKey(masterKey.address, kBlackholeAddress),
+        build.setRegularKey(address, created.key.address),
       );
+      fullAuth = signerFrom(created.key, MAC_KEY_LABEL);
+      await stepTx(
+        "Proof transaction, signed by the ML-DSA-44 key",
+        fullAuth,
+        build.accountSetNoop(address),
+      );
+      // The sealed key must outlive the page before the master key goes (live node only: the
+      // simulated ledger is gone with the page anyway).
+      if (backend.mode === "live") {
+        if (!save()) throw new Error(VAULT_NOT_KEPT_MESSAGE);
+        addStep("Keep the sealed key in this browser (it opens only with Touch ID)").status = "ok";
+      }
       await stepTx(
         "AccountSet asfDisableMaster, signed by the master key",
         master,
-        build.accountSetDisableMaster(masterKey.address),
+        build.accountSetDisableMaster(address),
       );
+    } finally {
+      // From now on each signature asks the passkey again.
+      created.wipe();
     }
-    fullAuth = signerFrom(passkey, "Passkey");
   }
 
+  /**
+   * The device's account: the address of its secp256k1 key, so the same Stax always gives the
+   * same account (the simulated Stax makes new keys at each setup). An account already set up
+   * is used as it is; one left half-way by an earlier run is finished, skipping what is done.
+   */
   async function setupLedger(): Promise<void> {
     backend.device.reset();
-    const classical = await backend.device.getPublicKey("secp256k1");
-    const pq = await backend.device.getPublicKey("mldsa44");
-    const onDevice = (algorithm: "secp256k1" | "mldsa44", label: string): Signer => {
-      const key = algorithm === "secp256k1" ? classical : pq;
-      return {
-        label,
-        algorithm,
-        publicKey: key.publicKey,
-        address: key.address,
-        onDevice: true,
-        sign: (tx) => backend.device.signTransaction(algorithm, tx),
-      };
-    };
-    master = onDevice("secp256k1", "Device master key");
-    state.address = classical.address;
+    const { classical, pq } = await readLedgerKeys();
+    master = deviceSigner("secp256k1", classical, "Device master key");
+    const mlDsa = deviceSigner("mldsa44", pq, "Device ML-DSA-44 key");
+    const address = classical.address;
+    state.address = address;
     addStep("Read the device keys (secp256k1 and ML-DSA-44)").status = "ok";
-    await fund(classical.address);
-    await stepTx(
-      "SetRegularKey to the ML-DSA-44 key, signed by the master key on the device",
-      master,
-      build.setRegularKey(classical.address, pq.address),
-    );
-    fullAuth = onDevice("mldsa44", "Device ML-DSA-44 key");
+    const existing = await backend.node.accountInfo(address);
+    const existingObjects = existing === null ? null : await backend.node.accountObjects(address);
+    if (
+      existing !== null &&
+      existingObjects !== null &&
+      hasOnlyPostQuantumAuthority(existing, existingObjects, pq.address)
+    ) {
+      addStep(
+        "This Stax's account is already set up (master key disabled, the device's ML-DSA-44 key as regular key): continuing with it, nothing sent",
+      ).status = "ok";
+      fullAuth = mlDsa;
+      return;
+    }
+    if (existing?.masterDisabled === true) {
+      throw new Error(
+        `${address} has its master key disabled, and either its regular key is not this device's ML-DSA-44 key or a signer list or passkey keeps another key in control: this page cannot set it up again.`,
+      );
+    }
+    if (existing === null) await fund(address);
+    else addStep("The account is already on the node: no faucet").status = "ok";
+    if (existing?.regularKey === pq.address) {
+      addStep("The regular key is already the device's ML-DSA-44 key").status = "ok";
+    } else {
+      await stepTx(
+        "SetRegularKey to the ML-DSA-44 key, signed by the master key on the device",
+        master,
+        build.setRegularKey(address, pq.address),
+      );
+    }
+    fullAuth = mlDsa;
     await stepTx(
       "Proof transaction, signed by the ML-DSA-44 key on the device",
       fullAuth,
-      build.accountSetNoop(classical.address),
+      build.accountSetNoop(address),
     );
     await stepTx(
       "AccountSet asfDisableMaster, signed by the master key on the device",
       master,
-      build.accountSetDisableMaster(classical.address),
+      build.accountSetDisableMaster(address),
     );
   }
 
-  function reset(): void {
+  function reset(options: { keepSaved?: boolean; keepVault?: boolean } = {}): void {
+    // What is kept for a reload always matches a ready account: a new setup forgets the old one.
+    if (options.keepSaved !== true) clearSavedProfile(storage, nodeKey);
+    if (options.keepVault !== true) macVault = null;
     state.profile = null;
     state.ready = false;
     state.address = null;
@@ -368,9 +618,7 @@ export function createDemo(backend: Backend) {
     return guarded(async () => {
       const address = requireAddress();
       if (fullAuth === null) throw new Error("No key with full authority");
-      const key = await backend.wallet.createSessionKey(
-        state.profile === "ledger" ? "mldsa44" : "p256",
-      );
+      const key = await backend.wallet.createSessionKey();
       const result = await submitWith(fullAuth, build.sessionSet(address, key.address, params));
       if (result.success) state.sessionKey = key;
       await refresh();
@@ -480,7 +728,7 @@ export function createDemo(backend: Backend) {
     return envelope(tx);
   }
 
-  /** For wallet adapters: sign as the account's own authority (passkey, device or master key). */
+  /** For wallet adapters: sign as the account's own authority (vault key, device or master key). */
   async function signAsAccount(tx: TxJson): Promise<TxJson> {
     if (fullAuth === null) throw new Error("No account is connected");
     return fullAuth.sign(tx);
@@ -494,8 +742,12 @@ export function createDemo(backend: Backend) {
     return fullAuth?.address ?? null;
   }
 
+  /**
+   * Leaves the account in this page. What this browser kept for a reload stays: for a Mac
+   * account the sealed key is the only copy, so a disconnect must not delete it.
+   */
   function disconnect(): void {
-    reset();
+    reset({ keepSaved: true });
   }
 
   /** Simulated clock only: let ledger time pass. */
@@ -521,6 +773,8 @@ export function createDemo(backend: Backend) {
     state,
     refresh,
     createAccount,
+    useExistingLedgerAccount,
+    restore,
     openSession,
     closeSession,
     runAction,

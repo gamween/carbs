@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createDemo } from "../demo";
+import { memoryStorage } from "../testing/memory-storage";
 import { NETWORKS } from "../networks";
 import { DeviceRejectedError, type ExposurePort } from "../ports";
-import { softwarePasskeySource } from "../wallets/passkey";
+import { softwarePrfSource } from "../wallets/prf";
 import { createLiveBackend } from "./backend";
 import { FakeAlphaNet } from "./fake-alphanet";
+import { reservesOf } from "./node";
 
 const LOCAL = { ...NETWORKS.local, faucet: "http://localhost:3005/accounts" };
 const noExposure: ExposurePort = {
@@ -20,7 +22,7 @@ async function live(fake = new FakeAlphaNet({ sessions: true })) {
     client: fake,
     network: () => LOCAL,
     approver: () => async () => approve.value,
-    passkeys: softwarePasskeySource(),
+    prf: softwarePrfSource(),
     exposure: noExposure,
     fetcher: fake.faucet,
     sleep: async () => undefined,
@@ -42,6 +44,38 @@ describe("live backend", () => {
     expect(backend.counterparties.sink).toMatch(/^r/);
     expect(backend.counterparties.sink).not.toMatch(/^rSim/);
     expect(backend.counterparties.sink).not.toBe(backend.counterparties.victim);
+  });
+
+  it("reports the reserves the node reports, read once a minute at most", async () => {
+    const { backend, fake } = await live();
+    const reads = () => fake.requests.filter((method) => method === "server_info").length;
+    const before = reads();
+    expect((await backend.node.serverInfo()).reserves).toEqual({
+      baseDrops: 1_000_000,
+      ownerDrops: 200_000,
+    });
+    await backend.node.serverInfo();
+    expect(reads() - before).toBe(1);
+  });
+});
+
+describe("reserves from server_info", () => {
+  it("reads the validated ledger, else the closed one, in drops", () => {
+    // xrpld's defaults, which a standalone node without [voting] runs on.
+    const standaloneDefault = { reserve_base_xrp: 10, reserve_inc_xrp: 2 };
+    expect(reservesOf({ info: { validated_ledger: standaloneDefault } })).toEqual({
+      baseDrops: 10_000_000,
+      ownerDrops: 2_000_000,
+    });
+    expect(
+      reservesOf({ info: { closed_ledger: { reserve_base_xrp: "1", reserve_inc_xrp: "0.2" } } }),
+    ).toEqual({ baseDrops: 1_000_000, ownerDrops: 200_000 });
+  });
+
+  it("is null when the node does not say, never a guess", () => {
+    expect(reservesOf({ info: {} })).toBeNull();
+    expect(reservesOf({ info: { validated_ledger: { reserve_base_xrp: 1 } } })).toBeNull();
+    expect(reservesOf(null)).toBeNull();
   });
 });
 
@@ -90,7 +124,7 @@ describe("live builders (the node's shapes, from its definitions)", () => {
 describe("the demo store on the live backend (real encoding and signing, test double node)", () => {
   async function started(profile: "demo" | "mac" | "ledger" = "demo") {
     const rig = await live();
-    const demo = createDemo(rig.backend);
+    const demo = createDemo(rig.backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     expect(await demo.createAccount(profile)).toBe(true);
     return { ...rig, demo };
   }
@@ -125,7 +159,7 @@ describe("the demo store on the live backend (real encoding and signing, test do
     expect(demo.state.session?.sessionKey).toBe(demo.state.sessionKey?.address);
   });
 
-  it("signs session payments with the P-256 session key and counts them against the cap", async () => {
+  it("signs session payments with the ML-DSA-44 session key and counts them against the cap", async () => {
     const { demo } = await started();
     await demo.openSession({ mode: "C", durationSec: 600, permissions: [], capDrops: 5_000_000 });
     const first = await demo.runAction("payment");
@@ -173,10 +207,9 @@ describe("the demo store on the live backend (real encoding and signing, test do
     expect(demo.state.session).toBeNull();
   });
 
-  it("registers a passkey and opens a session by passkey (WebAuthn over the binary signing data)", async () => {
+  it("sets the Mac account up with its PRF vault key and opens a session with it, no passkey on the ledger", async () => {
     const { demo, fake } = await started("mac");
     expect(demo.state.error).toBeNull();
-    expect(demo.state.objects?.passkeys).toHaveLength(0); // the double does not list passkey_list objects
     const opened = await demo.openSession({
       mode: "A",
       durationSec: 600,
@@ -185,9 +218,11 @@ describe("the demo store on the live backend (real encoding and signing, test do
     });
     expect(opened?.code).toBe("tesSUCCESS");
     const account = fake.accounts.get(demo.state.address ?? "");
-    expect(account?.passkeys).toHaveLength(1);
+    expect(account?.passkeys).toHaveLength(0);
+    expect(account?.masterDisabled).toBe(true);
     const last = account?.history.at(-1);
-    expect(last?.tx["PasskeySignature"]).toBeDefined();
+    expect(last?.tx["PasskeySignature"]).toBeUndefined();
+    expect(String(last?.tx.SigningPubKey)).toHaveLength(2624);
   });
 
   it("sets up a Ledger account on the simulated device contract", async () => {
@@ -202,7 +237,7 @@ describe("the demo store on the live backend (real encoding and signing, test do
   it("reports a rejection on the device and sends nothing", async () => {
     const rig = await live();
     rig.approve.value = false;
-    const demo = createDemo(rig.backend);
+    const demo = createDemo(rig.backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     expect(await demo.createAccount("ledger")).toBe(false);
     expect(demo.state.error).toContain("Rejected on the device");
     expect(rig.fake.requests).not.toContain("submit");
@@ -221,7 +256,7 @@ describe("counterparties on a real ledger", () => {
   it("funds the payee before the first action, since a real payment below the reserve cannot create it", async () => {
     const fake = new FakeAlphaNet({ sessions: true });
     const rig = await live(fake);
-    const demo = createDemo(rig.backend);
+    const demo = createDemo(rig.backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("demo");
     await demo.openSession({ mode: "A", durationSec: 600, permissions: [], capDrops: 0 });
     expect(fake.accounts.has(rig.backend.counterparties.sink)).toBe(false);

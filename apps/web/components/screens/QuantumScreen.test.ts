@@ -287,6 +287,22 @@ describe("Quantum screen, live migration (AlphaNet double, SIMULATED device)", (
     expect(wrapper.get("[data-testid='live-note']").text()).toContain("node real");
   });
 
+  it("calls the account fresh for the simulated device only, not for a real Stax", async () => {
+    const { wrapper, ctx } = liveScreen();
+    expect(wrapper.get("[data-testid='migration-start']").text()).toBe(
+      "Start with a fresh AlphaNet account",
+    );
+    expect(wrapper.find("[data-testid='stax-account-note']").exists()).toBe(false);
+    await ctx.deviceSelection.choose("usb");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='migration-start']").text()).toBe(
+      "Start with this Stax's AlphaNet account",
+    );
+    expect(wrapper.get("[data-testid='stax-account-note']").text()).toContain(
+      "the same device always gives the same AlphaNet account",
+    );
+  });
+
   it("migrates a fresh account on the node, with explorer links, the seed backup and the safety refusals", async () => {
     const { wrapper, fake, ctx } = liveScreen();
     const idle = () =>

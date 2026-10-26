@@ -13,6 +13,7 @@ import {
   kInsPqSign,
   kInsSign,
   kSw,
+  kSwOs,
   type ApduResponse,
   type ApduTransport,
   type LedgerDevice,
@@ -126,12 +127,23 @@ describe("real Ledger Stax port (fake APDU transport)", () => {
   it("describes the other device errors for the person", async () => {
     const wrongApp = createLedgerDevicePort(defs, answering(kSw.claNotSupported));
     await expect(wrongApp.getPublicKey("secp256k1")).rejects.toThrow(
-      "the open app is not the XRP app (0x6e00)",
+      "the open app is not the XRP app: open the XRP app on the Stax (0x6e00)",
     );
     const locked = createLedgerDevicePort(defs, {
       exchange: () => Promise.reject(DMK_LOCKED),
     });
-    await expect(locked.getPublicKey("mldsa44")).rejects.toThrow("the device is locked (0x5515)");
+    await expect(locked.getPublicKey("mldsa44")).rejects.toThrow(
+      "the device is locked: unlock it, then open the XRP app on the Stax (0x5515)",
+    );
+  });
+
+  it("says to open the XRP app when the Stax answers 0x650f (dashboard or Security Key app open)", async () => {
+    const otherApp = createLedgerDevicePort(defs, answering(kSwOs.appNotOpen));
+    const error: unknown = await otherApp.getPublicKey("mldsa44").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    const message = error instanceof Error ? error.message : "";
+    expect(message).toContain("open the XRP app on the Stax (0x650f)");
+    expect(message).not.toContain("unknown");
   });
 
   it("does not keep a failed key read: the next call asks the device again", async () => {

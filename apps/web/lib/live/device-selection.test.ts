@@ -115,7 +115,9 @@ describe("device selection", () => {
     await selection.connect();
     expect(selection.connected).toBe(false);
     expect(selection.busy).toBe(false);
-    expect(selection.error).toBe("NoAccessibleDeviceError · No device selected");
+    expect(selection.error).toBe(
+      "no Ledger was picked: plug in the Stax, unlock it and choose it in the browser's list",
+    );
   });
 
   it("closes the session when a Ledger is unplugged or the page goes away", async () => {

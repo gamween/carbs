@@ -1,6 +1,6 @@
 # 0011. Two account profiles; a Ledger account uses ML-DSA-44 session keys
 
-**Status:** Accepted (2026-10-24). Supersedes in part [0004](0004-non-extractible-p256-session-keys.md) (now for Mac accounts only) and [0008](0008-post-quantum-root-classical-or-pq-sessions.md) (its choice of session key).
+**Status:** Accepted (2026-10-24); its Mac account is superseded by [0012](0012-post-quantum-mac-account.md) (2026-10-25). Supersedes in part [0004](0004-non-extractible-p256-session-keys.md) (now for Mac accounts only) and [0008](0008-post-quantum-root-classical-or-pq-sessions.md) (its choice of session key).
 
 **Context.** The device holds an ML-DSA-44 key derived from its seed. A passkey on the Mac signs with P-256. A passkey has full authority: the node accepts any key of the account's passkey list, even once the master key is disabled (`rippled/src/libxrpl/tx/Transactor.cpp:1136-1160`). In this build a passkey list cannot be replaced or removed (P6). An account holding both keys would keep a classical key with full authority beside its post-quantum root. Session keys are generated in the browser, where WebCrypto offers P-256 but no ML-DSA.
 

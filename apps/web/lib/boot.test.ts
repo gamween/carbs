@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createAppContext } from "./app-context";
 import { chooseBackend } from "./boot";
 import { FakeAlphaNet } from "./live/fake-alphanet";
-import { softwarePasskeySource } from "./wallets/passkey";
+import { profileStorageKey } from "./saved-profile";
+import { softwarePrfSource } from "./wallets/prf";
 
 function boot(options: Parameters<typeof chooseBackend>[1], network = {}) {
   const ctx = createAppContext(network);
@@ -10,7 +11,7 @@ function boot(options: Parameters<typeof chooseBackend>[1], network = {}) {
   return { ctx, run: () => chooseBackend(ctx, options) };
 }
 
-const common = { passkeys: softwarePasskeySource(), sleep: async () => undefined };
+const common = { prf: softwarePrfSource(), sleep: async () => undefined };
 
 describe("choosing the node", () => {
   it("stays on the simulation when it was asked for", async () => {
@@ -46,6 +47,45 @@ describe("choosing the node", () => {
     });
     expect(ctx.network.state.node).toBe("local");
     expect(chosen.backend.node.explorerNetwork()?.id).toBe("local");
+  });
+
+  it("gives the live node's store the browser's storage, keyed by the node's URL", async () => {
+    const fake = new FakeAlphaNet({ sessions: true });
+    const saved = new Map<string, string>([
+      [
+        profileStorageKey("ws://localhost:6006"),
+        JSON.stringify({
+          version: 2,
+          node: "ws://localhost:6006",
+          profile: "ledger",
+          address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+          device: "usb",
+          vault: null,
+          authority: {
+            algorithm: "mldsa44",
+            publicKey: "AB",
+            address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+          },
+        }),
+      ],
+    ]);
+    const storage = {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => void saved.set(key, value),
+      removeItem: (key: string) => void saved.delete(key),
+    };
+    const { run } = boot({
+      ...common,
+      requested: "local",
+      clientFactory: () => fake,
+      fetcher: fake.faucet,
+      storage,
+    });
+    const { ctx: chosen } = await run();
+    // Found under the local node's URL, checked against the node: that account is not on it.
+    expect(await chosen.demo.restore()).toBeNull();
+    expect(chosen.demo.state.error).toContain("not on this node any more");
+    expect(saved.has(profileStorageKey("ws://localhost:6006"))).toBe(false);
   });
 
   it("runs on the team node at its preset URL", async () => {

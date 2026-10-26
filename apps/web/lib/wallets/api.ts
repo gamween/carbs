@@ -1,6 +1,7 @@
 import { reactive } from "vue";
 import type { AccountInfo } from "xrpl-connect";
 import { WEBHID_MESSAGE } from "../browser-support";
+import { PRF_UNAVAILABLE } from "./prf";
 import type { Backend } from "../ports";
 import type { CarbsAdapter } from "./adapters";
 import {
@@ -33,8 +34,8 @@ export interface WalletsState {
   error: string | null;
 }
 
-const PASSKEY_UNAVAILABLE =
-  "WebAuthn needs a browser with passkeys and a secure context (https or localhost).";
+export const STAX_NEEDS_LIVE_NODE =
+  "Pick Local node or Team node under Node, at the top: the real Stax signs for a node with the SigningSessions amendment, not for the simulation.";
 
 /** The wallet entry's logic, separate from the modal so that it can be tested alone. */
 export function createWalletsApi(
@@ -56,10 +57,12 @@ export function createWalletsApi(
     for (const adapter of adapters) {
       const available = await adapter.isAvailable();
       const reason =
-        adapter.id === "ledger-stax"
-          ? WEBHID_MESSAGE
-          : adapter.id === "passkey-mac"
-            ? PASSKEY_UNAVAILABLE
+        adapter.id === "ledger-stax-usb"
+          ? backend.mode === "simulated"
+            ? STAX_NEEDS_LIVE_NODE
+            : WEBHID_MESSAGE
+          : adapter.id === "mac-touch-id"
+            ? PRF_UNAVAILABLE
             : null;
       entries.push({
         description: adapter.description,
@@ -68,8 +71,7 @@ export function createWalletsApi(
         simulated: simulatedParts(
           adapter.description,
           backend.mode === "simulated",
-          authenticatorSimulated,
-          backend.device.mode === "simulated",
+          authenticatorSimulated || backend.wallet.prfSimulated,
         ),
       });
     }

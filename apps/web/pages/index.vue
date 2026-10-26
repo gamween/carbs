@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import SimBadge from "~/components/ui/SimBadge.vue";
+import { CARBS_AMENDMENTS } from "~/lib/amendments";
 import { useBackend } from "~/lib/context";
 
 const backend = useBackend();
+
+/** This fork's amendments, as `infra/standalone.cfg` enables them (a test checks the file). */
+const AMENDMENTS = CARBS_AMENDMENTS.map((a) => `${a.name} (${a.what})`);
 
 const SCREENS = [
   {
     to: "/account",
     title: "Account",
-    body: "A Mac account with a passkey, or a Ledger account with a post-quantum root.",
+    body: "Two post-quantum accounts: a Mac account whose ML-DSA-44 key Touch ID unlocks, or a Ledger account.",
   },
   {
     to: "/session",
@@ -43,8 +47,13 @@ const SCREENS = [
     <p class="eyebrow mb-2">carbs</p>
     <h1 class="text-3xl md:text-4xl">Quantum-safe and delegable, enforced by the ledger</h1>
     <p class="mt-4 max-w-2xl text-lg text-muted-foreground">
-      A post-quantum root key on a Ledger device, and signing sessions that the ledger itself
-      confines in time, in transaction types and in XRP spent.
+      A post-quantum root key on a Ledger device or behind Touch ID, and signing sessions that the
+      ledger itself confines in time, in transaction types and in XRP spent. Full post-quantum: no
+      classical key in the flow, except the master key, which the setup disables.
+    </p>
+    <p class="mt-3 max-w-2xl text-sm text-muted-foreground" data-testid="amendments">
+      A node started from this repository's configuration enables {{ AMENDMENTS.length }} amendments
+      of this fork: {{ AMENDMENTS.join(", ") }}. The public AlphaNet has none of them.
     </p>
     <p
       v-if="backend.mode === 'simulated'"

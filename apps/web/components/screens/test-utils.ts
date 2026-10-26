@@ -1,5 +1,5 @@
 import { flushPromises, mount, RouterLinkStub } from "@vue/test-utils";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 import { WalletManager } from "xrpl-connect";
 import type { Component } from "vue";
 import { createAppContext, type AppContext } from "~/lib/app-context";
@@ -8,7 +8,7 @@ import type { Backend } from "~/lib/ports";
 import type { NetworkStoreOptions } from "~/lib/network-store";
 import { createWalletAdapters } from "~/lib/wallets/adapters";
 import { createWalletsApi } from "~/lib/wallets/api";
-import { softwarePasskeySource } from "~/lib/wallets/passkey";
+import { softwarePrfSource } from "~/lib/wallets/prf";
 import type { BackendStatus } from "~/lib/boot";
 import {
   BACKEND_KEY,
@@ -49,8 +49,8 @@ export function mountScreen(
   });
   if (options.status !== undefined) ctx.network.state.node = options.status.active;
   const adapters = createWalletAdapters(
-    { backend: ctx.backend, demo: ctx.demo, network: ctx.network },
-    softwarePasskeySource(),
+    { backend: ctx.backend, demo: ctx.demo, network: ctx.network, device: ctx.deviceSelection },
+    softwarePrfSource(),
   );
   const manager = new WalletManager({ adapters, autoConnect: false, logger: { level: "error" } });
   const wallets = createWalletsApi(manager, adapters, ctx.backend, true);
@@ -95,4 +95,16 @@ export { flushPromises };
 /** The result codes shown inside a wrapper, in order. */
 export function codesIn(wrapper: ReturnType<typeof mount>): string[] {
   return wrapper.findAll("[data-testid='result-code']").map((node) => node.text());
+}
+
+/**
+ * Waits until the store is idle: the Mac account's key opens its vault with WebCrypto (HKDF,
+ * AES-GCM), which settles outside the microtask queue `flushPromises` drains.
+ */
+export async function settled(ctx: AppContext): Promise<void> {
+  await flushPromises();
+  await vi.waitFor(() => {
+    if (ctx.demo.state.busy) throw new Error("still busy");
+  });
+  await flushPromises();
 }

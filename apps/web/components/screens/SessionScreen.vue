@@ -83,7 +83,7 @@ const openLabel = computed(() =>
     ? "Open on the Ledger"
     : state.profile === "demo"
       ? "Open with the demo master key"
-      : "Open with the passkey",
+      : "Open with Touch ID",
 );
 
 async function open(): Promise<void> {

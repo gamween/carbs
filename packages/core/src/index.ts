@@ -18,6 +18,7 @@ export * from "./keys/mldsa.js";
 export * from "./keys/p256-session.js";
 export * from "./keys/passkey.js";
 export * from "./keys/pq-passkey.js";
+export * from "./keys/prf-vault.js";
 export * from "./node.js";
 export * from "./passkey-wallet.js";
 export * from "./session.js";

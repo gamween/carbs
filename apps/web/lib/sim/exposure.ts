@@ -90,7 +90,7 @@ export class SimulatedExposure implements ExposurePort {
       reasons.push({
         source: "passkey",
         exposed: true,
-        text: "Passkey public keys are stored on the ledger, so they are exposed by construction.",
+        text: "The simulation's passkeys are P-256: their public keys are stored on the ledger, so they are exposed by construction.",
         firstTxHash: null,
         firstLedger: null,
       });

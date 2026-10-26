@@ -3,6 +3,7 @@ import { addressFromPublicKey, mlDsaKeyPairFromSeed, type FinalResult } from "@c
 import { describe, expect, it } from "vitest";
 import { createSimBackend } from "./backend";
 import { createDemo } from "./demo";
+import { memoryStorage } from "./testing/memory-storage";
 import { createDevicePrompt } from "./device-prompt";
 import { LiveExposure } from "./live/exposure";
 import { createLiveClients } from "./live/clients";
@@ -12,7 +13,7 @@ import { createLiveBackend } from "./live/backend";
 import { toNodeResult } from "./live/result";
 import { NETWORKS } from "./networks";
 import type { ExposureReport } from "./ports";
-import { softwarePasskeySource } from "./wallets/passkey";
+import { softwarePrfSource } from "./wallets/prf";
 import { accountIdOf, simPublicKey, signWith } from "./sim/keys";
 import { SimulatedNode } from "./sim/node";
 
@@ -55,7 +56,7 @@ describe("a result is final only when the node said its last word", () => {
 describe("the store", () => {
   it("keeps the node's answer when the refresh after it fails", async () => {
     const backend = createSimBackend();
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("mac");
     await demo.openSession(A);
     backend.node.accountObjects = async () => {
@@ -69,7 +70,7 @@ describe("the store", () => {
 
   it("does not let a slow poll overwrite a newer refresh", async () => {
     const backend = createSimBackend();
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("mac");
     await demo.openSession(A);
     expect(demo.state.session).not.toBeNull();
@@ -95,7 +96,7 @@ describe("the store", () => {
 
   it("the poll never throws and skips while an action runs", async () => {
     const backend = createSimBackend();
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("mac");
     backend.node.serverInfo = async () => {
       throw new Error("down");
@@ -106,7 +107,7 @@ describe("the store", () => {
   it("is not ready when the setup failed half-way, so the other screens ask for an account", async () => {
     const backend = createSimBackend();
     backend.simDevice.setApprover(async () => false);
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     expect(await demo.createAccount("ledger")).toBe(false);
     expect(demo.state.ready).toBe(false);
     expect(demo.state.address).not.toBeNull(); // the partial setup stays visible on the Account screen
@@ -114,7 +115,7 @@ describe("the store", () => {
 
   it("creates a second Ledger account on a fresh device", async () => {
     const backend = createSimBackend();
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     expect(await demo.createAccount("ledger")).toBe(true);
     const first = demo.state.address;
     expect(await demo.createAccount("ledger")).toBe(true);
@@ -124,7 +125,7 @@ describe("the store", () => {
 
   it("keeps the logs bounded", async () => {
     const backend = createSimBackend();
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("mac");
     await demo.openSession(A);
     for (let i = 0; i < 55; i += 1) await demo.runAction("ticket");
@@ -133,7 +134,7 @@ describe("the store", () => {
 
   it("funds the victim account only for the attack that needs it", async () => {
     const backend = createSimBackend();
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("mac");
     await demo.openSession(A);
     await demo.runAttack("regular-key");
@@ -243,7 +244,7 @@ describe("the live backend labels what is real", () => {
       client: fake,
       network: () => ({ ...NETWORKS.local, faucet: "http://localhost:3005/accounts" }),
       approver: () => async () => true,
-      passkeys: { ...softwarePasskeySource(), simulated: false },
+      prf: { ...softwarePrfSource(), simulated: false },
       exposure: {
         mode: "live",
         async check() {
@@ -256,7 +257,7 @@ describe("the live backend labels what is real", () => {
       },
       sleep: async () => undefined,
     });
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("mac");
     const labels = demo.state.steps.map((s) => s.label).join(" | ");
     expect(labels).toContain("Fund the account at the faucet");

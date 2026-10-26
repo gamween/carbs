@@ -2,9 +2,10 @@
  * The wallet adapters of the web app, written against the `WalletAdapter` interface of
  * xrpl-connect 1.0.0 (`apps/web/node_modules/xrpl-connect/index.d.ts:1928`, which declares
  * `id`, `name`, `capabilities`, `isAvailable`, `connect`, `disconnect`, `getAccount`,
- * `getNetwork`, `sign`, `signAndSubmit`, `signMessage`, `on`, `off`). Three adapters, and
- * only these: the Ledger Stax (Device Management Kit only: the legacy ledgerjs adapter of
- * xrpl-connect is never imported), a passkey on this Mac, and a throw-away demo account.
+ * `getNetwork`, `sign`, `signAndSubmit`, `signMessage`, `on`, `off`). Four adapters, and
+ * only these: the real Ledger Stax over USB and its SIMULATED software double (Device
+ * Management Kit only: the legacy ledgerjs adapter of xrpl-connect is never imported), a
+ * post-quantum Mac account unlocked by Touch ID (WebAuthn PRF), and a throw-away demo account.
  * None of them needs an API key or loads a third-party script.
  */
 import type {
@@ -22,12 +23,14 @@ import { hasWebHid } from "../browser-support";
 import { DEFAULT_FEE_DROPS } from "../constants";
 import type { Demo, Profile } from "../demo";
 import type { NetworkStore } from "../network-store";
-import type { Backend, KeyHandle, TxJson } from "../ports";
-import type { PasskeyMaterial } from "./passkey";
+import type { Backend, TxJson } from "../ports";
+import { NOT_CONNECTED_MESSAGE, type DeviceSelection } from "../live/device-selection";
+import type { PrfSource } from "./prf";
 import {
   DEMO_ACCOUNT,
-  LEDGER_STAX,
-  PASSKEY_MAC,
+  LEDGER_STAX_SIMULATED,
+  LEDGER_STAX_USB,
+  MAC_TOUCH_ID,
   type WalletDescription,
   type WalletId,
 } from "./catalog";
@@ -37,16 +40,8 @@ export interface WalletHost {
   backend: Backend;
   demo: Demo;
   network: NetworkStore;
-}
-
-/** Where a passkey comes from: the browser's authenticator, or the software one in tests. */
-export interface PasskeySource {
-  /** True for the software authenticator (SIMULATED). */
-  simulated: boolean;
-  available(): boolean;
-  create(): Promise<KeyHandle>;
-  /** The passkey and its authenticator, for a live wallet that signs through `@carbs/sessions`. */
-  material(): Promise<PasskeyMaterial>;
+  /** The device of the live backend: the real Stax over USB, or the software double. */
+  device: DeviceSelection;
 }
 
 type Listener = (data: unknown) => void;
@@ -126,7 +121,7 @@ abstract class CarbsAdapter implements WalletAdapter {
     const signed = await this.signJson(transaction);
     return {
       hash: this.host.backend.node.transactionHash(signed),
-      signature: signed.TxnSignature ?? JSON.stringify(signed["PasskeySignature"] ?? ""),
+      signature: signed.TxnSignature ?? "",
       signerAddress: this.host.demo.accountSignerAddress() ?? "",
       tx: signed,
     };
@@ -192,53 +187,68 @@ async function createFor(host: WalletHost, profile: Profile, adapterName: string
   if (!ok) throw new Error(host.demo.state.error ?? `${adapterName} could not set up the account`);
 }
 
-/** The Ledger Stax through the Device Management Kit: the simulated double or a real one (USB). */
-export class LedgerStaxAdapter extends CarbsAdapter {
-  readonly id = "ledger-stax";
-  readonly name = LEDGER_STAX.name;
-  readonly description = LEDGER_STAX;
+/**
+ * The real Ledger Stax over USB, through the Device Management Kit (WebHID). Only on a live
+ * node: the Stax signs for a node with the SigningSessions amendment. The connection runs first, inside
+ * the click that opened it, since WebHID's device picker needs that gesture.
+ */
+export class LedgerStaxUsbAdapter extends CarbsAdapter {
+  readonly id = "ledger-stax-usb";
+  readonly name = LEDGER_STAX_USB.name;
+  readonly description = LEDGER_STAX_USB;
 
   async isAvailable(): Promise<boolean> {
-    // The simulated Stax needs no browser support; the real one needs WebHID.
-    return this.host.backend.device.mode === "simulated" || hasWebHid();
+    return this.host.backend.mode === "live" && hasWebHid();
   }
 
   protected async open(): Promise<void> {
+    const { device } = this.host;
+    await device.choose("usb");
+    await device.connect();
+    if (!device.connected) throw new Error(device.error ?? NOT_CONNECTED_MESSAGE);
     await createFor(this.host, "ledger", this.name);
   }
 }
 
-/** A passkey on this Mac: the browser's authenticator in the browser, the software one in tests. */
-export class PasskeyMacAdapter extends CarbsAdapter {
-  readonly id = "passkey-mac";
-  readonly name = PASSKEY_MAC.name;
-  readonly description = PASSKEY_MAC;
+/** The software double of the Stax in this page (SIMULATED): the same flow with no device. */
+export class LedgerStaxSimulatedAdapter extends CarbsAdapter {
+  readonly id = "ledger-stax-simulated";
+  readonly name = LEDGER_STAX_SIMULATED.name;
+  readonly description = LEDGER_STAX_SIMULATED;
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  protected async open(): Promise<void> {
+    // On a live node the device follows the choice: going back to the double closes a real Stax.
+    if (this.host.backend.mode === "live") await this.host.device.choose("simulated");
+    await createFor(this.host, "ledger", this.name);
+  }
+}
+
+/**
+ * The post-quantum Mac account: Touch ID releases a WebAuthn PRF secret that unlocks an
+ * ML-DSA-44 key sealed in this browser. On the simulation the PRF is the software double.
+ */
+export class MacTouchIdAdapter extends CarbsAdapter {
+  readonly id = "mac-touch-id";
+  readonly name = MAC_TOUCH_ID.name;
+  readonly description = MAC_TOUCH_ID;
 
   constructor(
     host: WalletHost,
-    readonly passkeys: PasskeySource,
+    readonly prf: PrfSource,
   ) {
     super(host);
   }
 
   async isAvailable(): Promise<boolean> {
-    return this.passkeys.available();
+    return this.host.backend.mode === "simulated" || this.prf.available();
   }
 
   protected async open(): Promise<void> {
-    const label = this.passkeys.simulated
-      ? "Create a passkey (SIMULATED: software authenticator, no prompt)"
-      : "Create a passkey with this browser's authenticator";
-    // On the live backend the wallet signs the node's binary signing data itself, with the same
-    // passkey source; on the simulation the passkey signs the simulated node's challenge.
-    const ok = await this.host.demo.createAccount(
-      "mac",
-      this.host.backend.mode === "live"
-        ? { passkeyLabel: label }
-        : { passkey: () => this.passkeys.create(), passkeyLabel: label },
-    );
-    if (!ok)
-      throw new Error(this.host.demo.state.error ?? `${this.name} could not set up the account`);
+    await createFor(this.host, "mac", this.name);
   }
 }
 
@@ -259,11 +269,12 @@ export class DemoAccountAdapter extends CarbsAdapter {
 
 export type { CarbsAdapter };
 
-/** The three adapters, in display order. */
-export function createWalletAdapters(host: WalletHost, passkeys: PasskeySource): CarbsAdapter[] {
+/** The four adapters, in display order. */
+export function createWalletAdapters(host: WalletHost, prf: PrfSource): CarbsAdapter[] {
   return [
-    new LedgerStaxAdapter(host),
-    new PasskeyMacAdapter(host, passkeys),
+    new LedgerStaxUsbAdapter(host),
+    new LedgerStaxSimulatedAdapter(host),
+    new MacTouchIdAdapter(host, prf),
     new DemoAccountAdapter(host),
   ];
 }

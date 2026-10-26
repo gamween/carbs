@@ -9,9 +9,9 @@ import { reactive } from "vue";
 import type { AppContext } from "./app-context";
 import { createDemo } from "./demo";
 import { createLiveBackend } from "./live/backend";
-import { isLiveChoice, type NodeChoice } from "./node-choice";
+import { isLiveChoice, type ChoiceStorage, type NodeChoice } from "./node-choice";
 import { NODE_TIMEOUT_MS, withTimeout } from "./timeout";
-import type { PasskeySource } from "./wallets/adapters";
+import type { PrfSource } from "./wallets/prf";
 
 export interface BackendStatus {
   /** The node the person chose (saved in the browser, or the build's default). */
@@ -26,13 +26,18 @@ export interface BackendStatus {
 
 export interface BootOptions {
   requested: NodeChoice;
-  passkeys: PasskeySource;
+  prf: PrfSource;
   /** The node's client; closed when the node is refused. */
   clientFactory?: (url: string) => NodeClient & { close?: () => void };
   fetcher?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   /** How long to wait for the node before staying on the simulation. */
   timeoutMs?: number;
+  /**
+   * Where a live node's account is kept across reloads (localStorage). The simulation keeps
+   * none: its ledger is gone with the page.
+   */
+  storage?: ChoiceStorage | null;
 }
 
 /** The context to run on, and what happened. */
@@ -65,7 +70,7 @@ export async function chooseBackend(
         network,
         approver: () => (review) => ctx.prompt.approver(review),
         device: ctx.deviceSelection,
-        passkeys: options.passkeys,
+        prf: options.prf,
         exposure: ctx.liveExposure,
         ...(options.fetcher === undefined ? {} : { fetcher: options.fetcher }),
         ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
@@ -75,7 +80,8 @@ export async function chooseBackend(
     );
     status.active = requested;
     ctx.network.state.node = requested;
-    return { ctx: { ...ctx, backend, demo: createDemo(backend) }, status };
+    const demo = createDemo(backend, { storage: options.storage ?? null, nodeKey: status.target });
+    return { ctx: { ...ctx, backend, demo }, status };
   } catch (error) {
     // The page stays on the simulation: hang up, even on a socket still connecting.
     client.close?.();

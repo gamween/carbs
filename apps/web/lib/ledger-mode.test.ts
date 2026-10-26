@@ -14,14 +14,19 @@ describe("Ledger mode", () => {
   it("is off with no Ledger involved: no account, a Mac account, a demo account", () => {
     expect(isLedgerMode(idle)).toBe(false);
     expect(isLedgerMode({ ...idle, profile: "mac" })).toBe(false);
-    expect(isLedgerMode({ ...idle, walletId: "passkey-mac" })).toBe(false);
+    expect(isLedgerMode({ ...idle, walletId: "mac-touch-id" })).toBe(false);
     expect(isLedgerMode({ ...idle, walletId: "demo-account" })).toBe(false);
   });
 
   it.each([
     ["a Ledger account is created or used", { profile: "ledger" }],
-    ["the Ledger Stax wallet is connected", { walletId: "ledger-stax" }],
-    ["the Ledger Stax wallet is connecting", { connectingWalletId: "ledger-stax" }],
+    ["the real Ledger Stax wallet is connected", { walletId: "ledger-stax-usb" }],
+    ["the real Ledger Stax wallet is connecting", { connectingWalletId: "ledger-stax-usb" }],
+    ["the simulated Ledger Stax wallet is connected", { walletId: "ledger-stax-simulated" }],
+    [
+      "the simulated Ledger Stax wallet is connecting",
+      { connectingWalletId: "ledger-stax-simulated" },
+    ],
     ["a real Stax is connected", { deviceConnected: true }],
     ["a real Stax is being connected", { deviceBusy: true }],
     ["the device asks for a review", { reviewing: true }],

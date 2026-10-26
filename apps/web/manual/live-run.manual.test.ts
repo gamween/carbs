@@ -13,10 +13,11 @@
 import { WebSocketClient } from "@carbs/sessions";
 import { describe, expect, it } from "vitest";
 import { createDemo } from "../lib/demo";
+import { memoryStorage } from "../lib/testing/memory-storage";
 import { NETWORKS } from "../lib/networks";
 import { ATTACKS } from "../lib/scenarios";
 import { createLiveBackend } from "../lib/live/backend";
-import { softwarePasskeySource } from "../lib/wallets/passkey";
+import { softwarePrfSource } from "../lib/wallets/prf";
 
 const WS = process.env["LIVE_WS"] ?? "ws://127.0.0.1:6006";
 const FAUCET = process.env["LIVE_FAUCET"] ?? "http://127.0.0.1:3005/accounts";
@@ -48,7 +49,7 @@ async function backend() {
     client: new WebSocketClient(WS),
     network: () => network,
     approver: () => async () => true,
-    passkeys: softwarePasskeySource(),
+    prf: softwarePrfSource(),
     exposure: {
       mode: "live",
       async check() {
@@ -66,7 +67,7 @@ describe("live run against the standalone node (manual)", () => {
       ["A", { mode: "A" as const, durationSec: 600, permissions: [], capDrops: 0 }],
       ["P", { mode: "P" as const, durationSec: 600, permissions: PERMISSIONS, capDrops: 0 }],
     ] as const) {
-      const demo = createDemo(live);
+      const demo = createDemo(live, { storage: memoryStorage(), nodeKey: "ws://test" });
       await demo.createAccount("mac");
       const opened = await demo.openSession(params);
       say(`[${label}] open:`, opened?.code);
@@ -88,7 +89,7 @@ describe("live run against the standalone node (manual)", () => {
 
   it("mode C: the 20 XRP cap and the sixth payment", async () => {
     const live = await backend();
-    const demo = createDemo(live);
+    const demo = createDemo(live, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("mac");
     say(
       "[C] open:",
@@ -111,7 +112,7 @@ describe("live run against the standalone node (manual)", () => {
 
   it("expiry: a 6 s session, then the attack after expiry and the own close", async () => {
     const live = await backend();
-    const demo = createDemo(live);
+    const demo = createDemo(live, { storage: memoryStorage(), nodeKey: "ws://test" });
     await demo.createAccount("demo");
     await demo.openSession({ mode: "A", durationSec: 6, permissions: [], capDrops: 0 });
     for (let i = 0; i < 40; i += 1) {

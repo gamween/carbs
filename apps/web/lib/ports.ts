@@ -5,6 +5,7 @@
  * packages/core, packages/ledger and the real node.
  */
 
+import type { PqVault } from "@carbs/sessions";
 import type { AppNetwork } from "./networks";
 
 export type BackendMode = "simulated" | "live";
@@ -105,12 +106,20 @@ export interface NodeResult {
   final: boolean;
 }
 
+/** What an account must hold and cannot spend, in drops: `base + ownerCount × owner`. */
+export interface Reserves {
+  baseDrops: number;
+  ownerDrops: number;
+}
+
 export interface ServerInfo {
   ledgerIndex: number;
   /** Ripple-epoch seconds of the last closed ledger (`parentCloseTime` of the next). */
   closeTime: number;
   networkLabel: string;
   features: readonly string[];
+  /** The node's reserves (`server_info`); null when it did not report them. */
+  reserves: Reserves | null;
 }
 
 export interface AccountInfo {
@@ -213,21 +222,39 @@ export interface DevicePort {
 
 export interface KeyHandle {
   algorithm: KeyAlgorithm;
-  /** Passkeys only: the credential id as hex. */
-  credentialId?: string;
   publicKey: string;
   address: string;
-  /** Returns the transaction with `SigningPubKey` and `TxnSignature` (and `PasskeySignature` for a passkey). */
+  /** Returns the transaction with `SigningPubKey` and `TxnSignature`. */
   sign(tx: TxJson): Promise<TxJson>;
+}
+
+/**
+ * The post-quantum Mac account's key: an ML-DSA-44 seed sealed under the PRF secret of a passkey
+ * (`PqVault` of `@carbs/sessions`). The passkey never reaches the ledger.
+ */
+export interface VaultKey {
+  /** The sealed seed: kept by the browser, it opens only after the passkey's user verification. */
+  vault: PqVault;
+  /**
+   * The ML-DSA-44 key. Until `wipe()` it signs with the seed made at setup, still in memory; then
+   * each signature asks the passkey again (Touch ID) and wipes the seed after use.
+   */
+  key: KeyHandle;
+  wipe(): void;
 }
 
 export interface WalletPort {
   readonly mode: BackendMode;
-  /** The master key of a Mac account. */
+  /** A master key in the page (the Mac and demo accounts' setup key). */
   createMasterKey(): Promise<KeyHandle>;
-  createPasskey(): Promise<KeyHandle>;
-  /** A fresh key for one session; never reused. */
-  createSessionKey(algorithm: "p256" | "mldsa44"): Promise<KeyHandle>;
+  /** The PRF passkey is the software double (SIMULATED). */
+  readonly prfSimulated: boolean;
+  /** Creates the PRF passkey, a fresh ML-DSA-44 seed, and seals it for `account`. */
+  createVaultKey(account: string): Promise<VaultKey>;
+  /** The key of a vault sealed earlier: each signature asks the passkey (Touch ID). */
+  openVaultKey(vault: PqVault): KeyHandle;
+  /** A fresh ML-DSA-44 key for one session; never reused. */
+  createSessionKey(): Promise<KeyHandle>;
 }
 
 export type ExposureStatus = "exposed" | "no-exposure-found" | "unknown";

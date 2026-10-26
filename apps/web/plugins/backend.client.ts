@@ -15,7 +15,7 @@ import {
 } from "~/lib/context";
 import { watchLedgerDisconnects } from "~/lib/live/device-selection";
 import type { NetworkStoreOptions } from "~/lib/network-store";
-import { browserPasskeySource } from "~/lib/wallets/passkey";
+import { browserPrfSource } from "~/lib/wallets/prf";
 
 /** A runtime-config value, or nothing when it is empty (the default of `lib/networks.ts` applies). */
 function configured(value: unknown): string | undefined {
@@ -45,7 +45,8 @@ export default defineNuxtPlugin(async (nuxtApp) => {
   const requested = readNodeChoice(window.localStorage, config.backend);
   const { ctx, status } = await chooseBackend(base, {
     requested,
-    passkeys: browserPasskeySource(),
+    prf: browserPrfSource(),
+    storage: window.localStorage,
   });
   if (status.active !== status.requested) clearNodeChoice(window.localStorage);
   setSharedAppContext(ctx);
@@ -62,6 +63,11 @@ export default defineNuxtPlugin(async (nuxtApp) => {
   // A real Stax's session is closed when it is unplugged or the page goes away.
   const hid: unknown = Reflect.get(window.navigator, "hid");
   watchLedgerDisconnects(ctx.deviceSelection, window, hid instanceof EventTarget ? hid : null);
+  // The account of the last visit on this node, if this browser kept it (live node only). A
+  // Ledger account signs on the real Stax: its choice comes back, the connection is a click.
+  void ctx.demo.restore().then(async (saved) => {
+    if (saved?.device === "usb") await ctx.deviceSelection.choose("usb");
+  });
   void ctx.demo.tick();
   // The simulated ledger closes on its own, at the pace of the real one; a live node is polled.
   window.setInterval(() => {

@@ -3,7 +3,8 @@
  * parts are SIMULATED. Written once here so the modal, the tests and the docs agree.
  */
 
-export type WalletId = "ledger-stax" | "passkey-mac" | "demo-account";
+export type WalletId =
+  "ledger-stax-usb" | "ledger-stax-simulated" | "mac-touch-id" | "demo-account";
 
 /** A part of the setup that can be simulated. */
 export type SimulatedPart = "node" | "device" | "authenticator" | "account";
@@ -23,33 +24,53 @@ export interface WalletDescription {
   alwaysSimulated: readonly SimulatedPart[];
 }
 
-export const LEDGER_STAX: WalletDescription = {
-  id: "ledger-stax",
-  name: "Ledger Stax",
-  keyType: "ML-DSA-44 root key (post-quantum) plus the device's secp256k1 master key",
+const LEDGER_KEY_TYPE = "ML-DSA-44 root key (post-quantum) plus the device's secp256k1 master key";
+
+/** The real Stax: over USB (WebHID), through the Device Management Kit. Nothing simulated. */
+export const LEDGER_STAX_USB: WalletDescription = {
+  id: "ledger-stax-usb",
+  name: "Ledger Stax (USB)",
+  keyType: LEDGER_KEY_TYPE,
   signs: [
-    "Master key (secp256k1, on the device): SetRegularKey and asfDisableMaster, during setup",
-    "ML-DSA-44 key (on the device): everything the account's own authority signs, sessions included",
-    "Session key (ML-DSA-44, made in the page): the transactions inside its session, no prompt",
+    "Master key (secp256k1, on the Stax): SetRegularKey and asfDisableMaster, during setup",
+    "ML-DSA-44 key (on the Stax): everything the account's own authority signs, sessions included",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
   ],
   summary:
-    "Post-quantum root. Every own-authority transaction is read and confirmed on the device, through the Device Management Kit.",
-  simulatedWhenBackendSimulated: ["node"],
-  // The device part follows the chosen device (`simulatedParts`): simulated double or real Stax.
+    "Your Stax over USB, with the XRP app open. Every own-authority transaction is read and confirmed on its screen, through the Device Management Kit. The account is the Stax's own: one already set up is used as it is.",
+  simulatedWhenBackendSimulated: [],
   alwaysSimulated: [],
 };
 
-export const PASSKEY_MAC: WalletDescription = {
-  id: "passkey-mac",
-  name: "Passkey (this Mac)",
-  keyType: "P-256 passkey (WebAuthn); not post-quantum",
+/** A software double of the Stax in this page: the same flow, no device. */
+export const LEDGER_STAX_SIMULATED: WalletDescription = {
+  id: "ledger-stax-simulated",
+  name: "Ledger Stax (simulated)",
+  keyType: `${LEDGER_KEY_TYPE}, both held by a software double in this page`,
   signs: [
-    "Master key (secp256k1, in the page): PasskeyListSet, once, during setup",
-    "Passkey (Touch ID or Face ID): opens sessions and signs what the account's own authority signs",
-    "Session key (P-256, non-extractible): the transactions inside its session, no prompt",
+    "Master key (secp256k1, simulated Stax): SetRegularKey and asfDisableMaster, during setup",
+    "ML-DSA-44 key (simulated Stax): everything the account's own authority signs, sessions included",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
   ],
   summary:
-    "A passkey has full authority and cannot be replaced or removed once registered, so this account is not post-quantum.",
+    "No device: a software double of the Stax shows its review in this page. New keys, so a new account, at each connection.",
+  simulatedWhenBackendSimulated: ["node"],
+  alwaysSimulated: ["device"],
+};
+
+/** The post-quantum Mac account: Touch ID, WebAuthn PRF, an ML-DSA-44 key sealed in the browser. */
+export const MAC_TOUCH_ID: WalletDescription = {
+  id: "mac-touch-id",
+  name: "Mac account (Touch ID)",
+  keyType:
+    "ML-DSA-44 key (post-quantum), sealed in this browser and unlocked by Touch ID through the WebAuthn PRF extension",
+  signs: [
+    "Master key (secp256k1, in the page): SetRegularKey and asfDisableMaster, during setup only; then disabled",
+    "ML-DSA-44 key (Touch ID opens it): opens sessions and signs what the account's own authority signs",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
+  ],
+  summary:
+    "Apple's platform authenticator cannot create an ML-DSA-44 passkey (COSE -48), so the passkey here only releases a PRF secret that unlocks an ML-DSA-44 key; the passkey never reaches the ledger. PRF with a real Touch ID has not been verified yet, only a virtual authenticator.",
   simulatedWhenBackendSimulated: ["node"],
   alwaysSimulated: [],
 };
@@ -60,43 +81,44 @@ export const DEMO_ACCOUNT: WalletDescription = {
   keyType: "secp256k1 master key, in memory, thrown away on reload",
   signs: [
     "Master key (in the page): everything the account's own authority signs",
-    "Session key (P-256): the transactions inside its session, no prompt",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
   ],
-  summary: "A throw-away account to try the screens. Nothing is kept.",
+  summary:
+    "A throw-away account to try the screens. Its master key is classical (secp256k1) and stays enabled, so it is not post-quantum. Nothing is kept.",
   // On a live node the account is real (funded by its faucet); only its key is thrown away.
   simulatedWhenBackendSimulated: ["node", "account"],
   alwaysSimulated: [],
 };
 
 export const WALLET_DESCRIPTIONS: readonly WalletDescription[] = [
-  LEDGER_STAX,
-  PASSKEY_MAC,
+  LEDGER_STAX_USB,
+  LEDGER_STAX_SIMULATED,
+  MAC_TOUCH_ID,
   DEMO_ACCOUNT,
 ];
 
 const PART_ORDER: readonly SimulatedPart[] = ["node", "device", "authenticator", "account"];
 
 /**
- * The parts that are SIMULATED for `description`, given the backend mode, the passkey's
- * authenticator and the device (the simulated double or a real Stax over USB).
+ * The parts that are SIMULATED for `description`, given the backend mode and the passkey's
+ * authenticator. The two Ledger entries do not depend on a choice made elsewhere: the USB one
+ * is the real Stax, the other one is always the software double.
  */
 export function simulatedParts(
   description: WalletDescription,
   backendSimulated: boolean,
   authenticatorSimulated = false,
-  deviceSimulated = true,
 ): SimulatedPart[] {
   const parts = new Set<SimulatedPart>(description.alwaysSimulated);
   if (backendSimulated)
     for (const part of description.simulatedWhenBackendSimulated) parts.add(part);
-  if (description.id === "passkey-mac" && authenticatorSimulated) parts.add("authenticator");
-  if (description.id === "ledger-stax" && deviceSimulated) parts.add("device");
+  if (description.id === "mac-touch-id" && authenticatorSimulated) parts.add("authenticator");
   return PART_ORDER.filter((part) => parts.has(part));
 }
 
 export const PART_LABELS: Record<SimulatedPart, string> = {
   node: "node",
   device: "Stax",
-  authenticator: "passkey",
+  authenticator: "Touch ID (software PRF)",
   account: "account",
 };

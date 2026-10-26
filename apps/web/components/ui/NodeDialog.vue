@@ -137,7 +137,7 @@ function onKeydown(event: KeyboardEvent): void {
       <template v-if="isLocal">
         <div class="space-y-2 text-sm" data-testid="node-run">
           <p>
-            Start the node with the amendment, its ledger closer and a dev faucet, from the
+            Start the node with the carbs amendments, its ledger closer and a dev faucet, from the
             repository (build <code>xrpld</code> first:
             <a
               class="explorer-link"

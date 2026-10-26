@@ -176,6 +176,7 @@ export class SimulatedNode implements NodePort, SimClock {
       closeTime: this.closeTime,
       networkLabel: this.networkLabel,
       features: this.amendmentEnabled ? ["SigningSessions", "Passkey", "Quantum"] : ["Passkey"],
+      reserves: { baseDrops: SIM_RESERVE_BASE_DROPS, ownerDrops: SIM_RESERVE_OWNER_DROPS },
     };
   }
 

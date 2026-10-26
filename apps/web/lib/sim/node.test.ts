@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { kMaxSessionDuration } from "@carbs/sessions";
 import { ASF_DISABLE_MASTER, SIM_LEDGER_CLOSE_SEC, TF_ALL_TRANSACTIONS } from "../constants";
-import { fundedAccount, openSession, pay, rig, send } from "./test-helpers";
+import { fundedAccount, openSession, pay, rig, send, simKey, simPasskey } from "./test-helpers";
 import { accountIdOf } from "./keys";
 import { ALL_TYPES, DELEGABLE_TYPES, NON_DELEGABLE_TYPES, SESSION_EXCLUDED_TYPES } from "./types";
 
@@ -56,7 +56,7 @@ describe("session open (cases 1 to 7)", () => {
     });
     expect(own.code).toBe("temMALFORMED");
 
-    const regular = await r.wallet.createSessionKey("p256");
+    const regular = simKey("p256");
     await send(r.node, r.master, {
       TransactionType: "SetRegularKey",
       Account: r.account,
@@ -130,7 +130,7 @@ describe("session open (cases 1 to 7)", () => {
   it("does not let a session key open a session (case 6)", async () => {
     const r = await rig();
     const { key } = await openSession(r, { Flags: TF_ALL_TRANSACTIONS });
-    const other = await r.wallet.createSessionKey("p256");
+    const other = simKey("p256");
     const result = await send(r.node, key, {
       TransactionType: SET,
       Account: r.account,
@@ -357,7 +357,7 @@ describe("closing (case 18)", () => {
 describe("ordinary authority and the passkey list", () => {
   it("refuses a second passkey list with tefEXCEPTION (spec 6.14, P6)", async () => {
     const r = await rig();
-    const passkey = await r.wallet.createPasskey();
+    const passkey = simPasskey();
     const list = {
       TransactionType: "PasskeyListSet",
       Account: r.account,
@@ -371,7 +371,7 @@ describe("ordinary authority and the passkey list", () => {
 
   it("lets a passkey sign, and refuses a session key equal to a passkey", async () => {
     const r = await rig();
-    const passkey = await r.wallet.createPasskey();
+    const passkey = simPasskey();
     await send(r.node, r.master, {
       TransactionType: "PasskeyListSet",
       Account: r.account,
@@ -398,7 +398,7 @@ describe("ordinary authority and the passkey list", () => {
       SetFlag: ASF_DISABLE_MASTER,
     };
     expect((await send(r.node, r.master, disable)).code).toBe("tecNO_ALTERNATIVE_KEY");
-    const regular = await r.wallet.createSessionKey("mldsa44");
+    const regular = simKey("mldsa44");
     await send(r.node, r.master, {
       TransactionType: "SetRegularKey",
       Account: r.account,

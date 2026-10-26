@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import BusyNote from "~/components/ui/BusyNote.vue";
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import ExplorerLink from "~/components/ui/ExplorerLink.vue";
 import LedgerDevicePicker from "~/components/ui/LedgerDevicePicker.vue";
 import ResultView from "~/components/ui/ResultView.vue";
@@ -14,10 +14,16 @@ import { PROFILE_LABELS, type Profile } from "~/lib/demo";
 const backend = useBackend();
 const demo = useDemo();
 const state = demo.state;
-const passkeyOnly = ref(false);
 const webHid = hasWebHid();
 // The simulated Stax needs no browser support; the real one does.
 const ledgerBlocked = computed(() => backend.device.mode === "live" && !webHid);
+
+// How the Mac account's key opens: Touch ID, or, on the simulation, the software PRF double.
+const macUnlock = computed(() =>
+  backend.wallet.prfSimulated
+    ? "opened by the software PRF double (SIMULATED: no passkey, no Touch ID)"
+    : "opened by Touch ID through the passkey's WebAuthn PRF extension",
+);
 
 // Who signs a Ledger account's own transactions: the Stax, or, on the simulation, software keys.
 const ledgerSigner = computed(() =>
@@ -30,33 +36,54 @@ const PROFILES = computed<readonly { id: Profile; title: string; body: string; n
   () => [
     {
       id: "mac",
-      title: "Mac account",
-      body: "Keeps its master key and has a passkey. The passkey opens sessions; the session key is a non-extractible P-256 key.",
-      note: "Not post-quantum: a passkey has full authority and cannot be replaced or removed.",
+      title: "Mac account (Touch ID)",
+      body: `An ML-DSA-44 key as regular key, master key disabled after an ML-DSA-44 proof. The key is sealed in this browser and ${macUnlock.value}; it opens sessions, and session keys are ML-DSA-44 too. No P-256 key reaches the ledger: the passkey is only the PRF oracle.`,
+      note: "Why PRF: Apple's platform authenticator cannot create an ML-DSA-44 passkey (COSE -48), so the passkey releases a secret (WebAuthn PRF, then HKDF-SHA256 and AES-256-GCM bound to the account's address) that unlocks the ML-DSA-44 key. PRF with a real Touch ID has not been verified yet, only a virtual authenticator. The sealed key lives in this browser only, and only that passkey opens it: clearing this site's data or deleting the passkey loses the account. The passkey's authenticator answers, which is Touch ID on a Mac unless the browser offers another one.",
     },
     {
       id: "ledger",
       title: "Ledger account",
       body: `Master key disabled, the device's ML-DSA-44 key as regular key, never a passkey. Every own-authority transaction is ${ledgerSigner.value}.`,
-      note: "Post-quantum root. Each transaction carries a 1 312-byte key and a 2 420-byte signature.",
+      note: "Post-quantum root: ML-DSA-44 in the XRP app, without side-channel countermeasures yet. Each transaction carries a 1 312-byte key and a 2 420-byte signature. Session keys are ML-DSA-44 keys made in this page, in memory (WebCrypto has no ML-DSA, so they are extractible).",
     },
   ],
 );
 
 const masterLabel = computed(() => (state.info?.masterDisabled ? "disabled" : "enabled"));
+/** The reserve this account cannot spend, from the reserves the node reports (never a constant). */
+const reserve = computed(() => {
+  const reserves = state.server?.reserves ?? null;
+  const info = state.info;
+  if (reserves === null || info === null) return null;
+  const lockedDrops = reserves.baseDrops + info.ownerCount * reserves.ownerDrops;
+  return {
+    locked: formatXrp(lockedDrops),
+    rule: `${formatXrp(reserves.baseDrops)} + ${info.ownerCount} × ${formatXrp(reserves.ownerDrops)} per owned object`,
+    available: formatXrp(Math.max(0, info.balanceDrops - lockedDrops)),
+  };
+});
 /** The account lives on the backend's node: its explorer, if it has one (the simulation has none). */
 const nodeNetwork = computed(() => backend.node.explorerNetwork());
 const simulated = computed(() => backend.mode === "simulated");
 
 async function create(profile: Profile): Promise<void> {
-  await demo.createAccount(profile, { passkeyOnly: profile === "mac" && passkeyOnly.value });
+  await demo.createAccount(profile);
 }
+
+/** The Ledger account is the device's own: the same Stax always gives the same address. */
+const ledgerAccountNote = computed(() =>
+  backend.device.mode === "simulated"
+    ? "The simulated Stax makes new keys at each setup, so each setup is a new account."
+    : "The account is the Stax's own address: the same device always gives the same account. One already set up is used as it is, with nothing sent.",
+);
 </script>
 
 <template>
   <section>
-    <ScreenHeader eyebrow="Account" title="Two kinds of account">
-      Pick a profile and create a fresh account. Everything below is read back from the node.
+    <ScreenHeader eyebrow="Account" title="Two post-quantum accounts">
+      Full post-quantum: no classical key in the flow, except the master key, which the setup
+      disables. A Mac account is new each time; a Ledger account is the device's own. Everything
+      below is read back from the node.
     </ScreenHeader>
 
     <div class="grid gap-5 md:grid-cols-2">
@@ -69,10 +96,6 @@ async function create(profile: Profile): Promise<void> {
         <h2 class="panel-title">{{ profile.title }}</h2>
         <p>{{ profile.body }}</p>
         <p class="text-sm text-muted-foreground">{{ profile.note }}</p>
-        <label v-if="profile.id === 'mac'" class="flex items-center gap-2 text-sm">
-          <input v-model="passkeyOnly" type="checkbox" data-testid="passkey-only" />
-          Passkey-only recipe: regular key to the blackhole address, master key disabled
-        </label>
         <p
           v-if="profile.id === 'ledger' && !webHid"
           class="text-sm text-warn"
@@ -85,14 +108,36 @@ async function create(profile: Profile): Promise<void> {
           </template>
         </p>
         <LedgerDevicePicker v-if="profile.id === 'ledger' && backend.mode === 'live'" />
-        <button
-          class="btn btn-primary"
-          :disabled="state.busy || (profile.id === 'ledger' && ledgerBlocked)"
-          :data-testid="`create-${profile.id}`"
-          @click="create(profile.id)"
+        <p
+          v-if="profile.id === 'ledger'"
+          class="text-sm text-muted-foreground"
+          data-testid="ledger-account-note"
         >
-          Create a fresh {{ profile.id === "mac" ? "Mac" : "Ledger" }} account
-        </button>
+          {{ ledgerAccountNote }}
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <button
+            class="btn btn-primary"
+            :disabled="state.busy || (profile.id === 'ledger' && ledgerBlocked)"
+            :data-testid="`create-${profile.id}`"
+            @click="create(profile.id)"
+          >
+            {{ profile.id === "mac" ? "Create a new Mac account" : "Set up the Ledger account" }}
+            <SimBadge
+              v-if="profile.id === 'mac' && backend.wallet.prfSimulated"
+              title="Software PRF double: no passkey, no Touch ID"
+            />
+          </button>
+          <button
+            v-if="profile.id === 'ledger'"
+            class="btn"
+            :disabled="state.busy || ledgerBlocked"
+            data-testid="use-ledger"
+            @click="demo.useExistingLedgerAccount()"
+          >
+            Use the account already set up
+          </button>
+        </div>
       </article>
     </div>
 
@@ -120,11 +165,20 @@ async function create(profile: Profile): Promise<void> {
             </dd>
             <dt>Profile</dt>
             <dd>
-              {{ state.profile ? PROFILE_LABELS[state.profile] : ""
-              }}{{ state.passkeyOnly ? " (passkey-only)" : "" }}
+              {{ state.profile ? PROFILE_LABELS[state.profile] : "" }}
             </dd>
             <dt>Balance</dt>
             <dd data-testid="balance">{{ formatXrp(state.info.balanceDrops) }}</dd>
+            <dt>Reserve</dt>
+            <dd data-testid="reserve">
+              <template v-if="reserve">
+                {{ reserve.locked }}
+                <span class="text-xs text-muted-foreground">
+                  ({{ reserve.rule }}, as the node reports; {{ reserve.available }} available)
+                </span>
+              </template>
+              <template v-else>not reported by the node</template>
+            </dd>
             <dt>Sequence</dt>
             <dd>{{ state.info.sequence }}</dd>
             <dt>Owner count</dt>
@@ -143,7 +197,7 @@ async function create(profile: Profile): Promise<void> {
               />
               <template v-else>none</template>
             </dd>
-            <dt>Passkeys</dt>
+            <dt>Passkeys on the ledger</dt>
             <dd>{{ state.objects?.passkeys.length ?? 0 }}</dd>
             <dt>Sessions</dt>
             <dd>{{ state.objects?.sessions.length ?? 0 }}</dd>
