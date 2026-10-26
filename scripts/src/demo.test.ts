@@ -6,6 +6,7 @@ import {
   addressFromPublicKey,
 } from "@carbs/sessions";
 import { alphanetDefinitions, alphanetServerDefinitions } from "@carbs/sessions/testing";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { faucetOrigins, parseArgs, parseOrigin } from "./args.js";
@@ -48,6 +49,12 @@ describe("local configuration", () => {
   it("reads the ports from the file", () => {
     expect(portsOf(CFG)).toEqual({ publicWs: 6006, adminWs: 6007 });
     expect(() => portsOf("[server]\n")).toThrow(/no port/);
+  });
+
+  it("starts the node with mainnet's fee and reserves, not xrpld's 10 XRP default", () => {
+    const cfg = readFileSync(new URL("../../infra/standalone.cfg", import.meta.url), "utf8");
+    const voting = /^\[voting\]\n((?:[a-z_]+ = \d+\n)+)/m.exec(localConfig(cfg, "/tmp/x"))?.[1];
+    expect(voting).toBe("reference_fee = 10\naccount_reserve = 1000000\nowner_reserve = 200000\n");
   });
 });
 
