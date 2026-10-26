@@ -105,12 +105,20 @@ export interface NodeResult {
   final: boolean;
 }
 
+/** What an account must hold and cannot spend, in drops: `base + ownerCount × owner`. */
+export interface Reserves {
+  baseDrops: number;
+  ownerDrops: number;
+}
+
 export interface ServerInfo {
   ledgerIndex: number;
   /** Ripple-epoch seconds of the last closed ledger (`parentCloseTime` of the next). */
   closeTime: number;
   networkLabel: string;
   features: readonly string[];
+  /** The node's reserves (`server_info`); null when it did not report them. */
+  reserves: Reserves | null;
 }
 
 export interface AccountInfo {

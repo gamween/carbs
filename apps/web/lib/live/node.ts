@@ -25,16 +25,20 @@ import type {
   HistoryEntry,
   NodePort,
   NodeResult,
+  Reserves,
   ServerInfo,
   SessionEntry,
   SessionMode,
   TxJson,
 } from "../ports";
+import { DROPS_PER_XRP } from "../constants";
 import { toNodeResult } from "./result";
 
 type Json = Record<string, unknown>;
 
 const FUND_POLL_MS = 1000;
+/** Reserves change only by a fee vote: read them again at most this often. */
+const RESERVES_REFRESH_MS = 60_000;
 const FUND_POLLS = 60;
 /** The ledger flag of a mode A session (`lsfAllTransactions`), read from the definitions. */
 const ALL_TRANSACTIONS_FLAG = "lsfAllTransactions";
@@ -45,6 +49,27 @@ function isObject(value: unknown): value is Json {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+/** XRP as `server_info` writes it (a number, or a decimal string) → drops. */
+function xrpFieldToDrops(value: unknown): number | undefined {
+  const xrp = typeof value === "string" ? Number(value) : value;
+  return typeof xrp === "number" && Number.isFinite(xrp) && xrp >= 0
+    ? Math.round(xrp * DROPS_PER_XRP)
+    : undefined;
+}
+
+/** The reserves of `server_info`'s validated ledger (the closed one where none is validated). */
+export function reservesOf(answer: unknown): Reserves | null {
+  const info = isObject(answer) && isObject(answer["info"]) ? answer["info"] : {};
+  const ledger = isObject(info["validated_ledger"])
+    ? info["validated_ledger"]
+    : isObject(info["closed_ledger"])
+      ? info["closed_ledger"]
+      : {};
+  const baseDrops = xrpFieldToDrops(ledger["reserve_base_xrp"]);
+  const ownerDrops = xrpFieldToDrops(ledger["reserve_inc_xrp"]);
+  return baseDrops === undefined || ownerDrops === undefined ? null : { baseDrops, ownerDrops };
 }
 
 export interface LiveNodeOptions {
@@ -75,7 +100,28 @@ export class LiveNode implements NodePort {
     return this.network().name;
   }
 
+  private reserves: Reserves | null = null;
+  private reservesAt = Number.NEGATIVE_INFINITY;
+
+  /** The node's reserves, read again once a minute; null while it does not report them. */
+  private async readReserves(): Promise<Reserves | null> {
+    if (this.reserves !== null && Date.now() - this.reservesAt < RESERVES_REFRESH_MS) {
+      return this.reserves;
+    }
+    try {
+      const read = reservesOf(await this.client.request("server_info", {}));
+      if (read !== null) {
+        this.reserves = read;
+        this.reservesAt = Date.now();
+      }
+    } catch {
+      // The ledger index and close time still matter; the reserves are read at the next poll.
+    }
+    return this.reserves;
+  }
+
   async serverInfo(): Promise<ServerInfo> {
+    const reserves = this.readReserves();
     const answer = await this.client.request("ledger", { ledger_index: "validated" });
     const ledger = isObject(answer) && isObject(answer["ledger"]) ? answer["ledger"] : {};
     const index = asNumber(ledger["ledger_index"]) ?? Number(ledger["ledger_index"]);
@@ -88,6 +134,7 @@ export class LiveNode implements NodePort {
       closeTime,
       networkLabel: this.networkLabel,
       features: this.defs.hasSessions ? ["SigningSessions"] : [],
+      reserves: await reserves,
     };
   }
 

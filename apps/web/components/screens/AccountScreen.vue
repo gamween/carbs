@@ -44,6 +44,18 @@ const PROFILES = computed<readonly { id: Profile; title: string; body: string; n
 );
 
 const masterLabel = computed(() => (state.info?.masterDisabled ? "disabled" : "enabled"));
+/** The reserve this account cannot spend, from the reserves the node reports (never a constant). */
+const reserve = computed(() => {
+  const reserves = state.server?.reserves ?? null;
+  const info = state.info;
+  if (reserves === null || info === null) return null;
+  const lockedDrops = reserves.baseDrops + info.ownerCount * reserves.ownerDrops;
+  return {
+    locked: formatXrp(lockedDrops),
+    rule: `${formatXrp(reserves.baseDrops)} + ${info.ownerCount} × ${formatXrp(reserves.ownerDrops)} per owned object`,
+    available: formatXrp(Math.max(0, info.balanceDrops - lockedDrops)),
+  };
+});
 /** The account lives on the backend's node: its explorer, if it has one (the simulation has none). */
 const nodeNetwork = computed(() => backend.node.explorerNetwork());
 const simulated = computed(() => backend.mode === "simulated");
@@ -125,6 +137,16 @@ async function create(profile: Profile): Promise<void> {
             </dd>
             <dt>Balance</dt>
             <dd data-testid="balance">{{ formatXrp(state.info.balanceDrops) }}</dd>
+            <dt>Reserve</dt>
+            <dd data-testid="reserve">
+              <template v-if="reserve">
+                {{ reserve.locked }}
+                <span class="text-xs text-muted-foreground">
+                  ({{ reserve.rule }}, as the node reports; {{ reserve.available }} available)
+                </span>
+              </template>
+              <template v-else>not reported by the node</template>
+            </dd>
             <dt>Sequence</dt>
             <dd>{{ state.info.sequence }}</dd>
             <dt>Owner count</dt>

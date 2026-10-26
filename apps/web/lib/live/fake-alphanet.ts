@@ -87,7 +87,12 @@ export class FakeAlphaNet implements NodeClient {
           ledger: { ledger_index: String(this.ledger), close_time: this.closeTime },
         };
       case "server_info":
-        return { info: { network_id: 24100 } };
+        return {
+          info: {
+            network_id: 24100,
+            validated_ledger: { reserve_base_xrp: 1, reserve_inc_xrp: 0.2 },
+          },
+        };
       case "fee":
         return { drops: { base_fee: "10" }, ledger_current_index: this.ledger };
       case "account_info":

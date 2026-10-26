@@ -16,6 +16,28 @@ describe("Account screen", () => {
     expect(wrapper.find("[data-testid='sim-badge']").exists()).toBe(true);
   });
 
+  it("shows the reserve the node reports, not a constant", async () => {
+    const { wrapper, ctx } = mountScreen(AccountScreen);
+    await wrapper.get("[data-testid='create-mac']").trigger("click");
+    await flushPromises();
+    // One passkey list: 1 XRP + 1 × 0.2 XRP on the simulated node.
+    expect(ctx.demo.state.info?.ownerCount).toBe(1);
+    expect(wrapper.get("[data-testid='reserve']").text()).toMatch(
+      /^1\.2 XRP\s+\(1 XRP \+ 1 × 0\.2 XRP per owned object, as the node reports; [\d.]+ XRP available\)$/,
+    );
+    // Another node, other reserves: the screen follows (xrpld's defaults of 10 and 2 XRP).
+    if (ctx.demo.state.server === null) throw new Error("no server info");
+    ctx.demo.state.server = {
+      ...ctx.demo.state.server,
+      reserves: { baseDrops: 10_000_000, ownerDrops: 2_000_000 },
+    };
+    await flushPromises();
+    expect(wrapper.get("[data-testid='reserve']").text()).toContain("12 XRP");
+    ctx.demo.state.server = { ...ctx.demo.state.server, reserves: null };
+    await flushPromises();
+    expect(wrapper.get("[data-testid='reserve']").text()).toBe("not reported by the node");
+  });
+
   it("does not claim device signing for the simulated Stax", () => {
     const { wrapper } = mountScreen(AccountScreen);
     const ledger = wrapper.get("[data-testid='profile-ledger']").text();

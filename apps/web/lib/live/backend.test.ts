@@ -5,6 +5,7 @@ import { DeviceRejectedError, type ExposurePort } from "../ports";
 import { softwarePasskeySource } from "../wallets/passkey";
 import { createLiveBackend } from "./backend";
 import { FakeAlphaNet } from "./fake-alphanet";
+import { reservesOf } from "./node";
 
 const LOCAL = { ...NETWORKS.local, faucet: "http://localhost:3005/accounts" };
 const noExposure: ExposurePort = {
@@ -42,6 +43,38 @@ describe("live backend", () => {
     expect(backend.counterparties.sink).toMatch(/^r/);
     expect(backend.counterparties.sink).not.toMatch(/^rSim/);
     expect(backend.counterparties.sink).not.toBe(backend.counterparties.victim);
+  });
+
+  it("reports the reserves the node reports, read once a minute at most", async () => {
+    const { backend, fake } = await live();
+    const reads = () => fake.requests.filter((method) => method === "server_info").length;
+    const before = reads();
+    expect((await backend.node.serverInfo()).reserves).toEqual({
+      baseDrops: 1_000_000,
+      ownerDrops: 200_000,
+    });
+    await backend.node.serverInfo();
+    expect(reads() - before).toBe(1);
+  });
+});
+
+describe("reserves from server_info", () => {
+  it("reads the validated ledger, else the closed one, in drops", () => {
+    // xrpld's defaults, which a standalone node without [voting] runs on.
+    const standaloneDefault = { reserve_base_xrp: 10, reserve_inc_xrp: 2 };
+    expect(reservesOf({ info: { validated_ledger: standaloneDefault } })).toEqual({
+      baseDrops: 10_000_000,
+      ownerDrops: 2_000_000,
+    });
+    expect(
+      reservesOf({ info: { closed_ledger: { reserve_base_xrp: "1", reserve_inc_xrp: "0.2" } } }),
+    ).toEqual({ baseDrops: 1_000_000, ownerDrops: 200_000 });
+  });
+
+  it("is null when the node does not say, never a guess", () => {
+    expect(reservesOf({ info: {} })).toBeNull();
+    expect(reservesOf({ info: { validated_ledger: { reserve_base_xrp: 1 } } })).toBeNull();
+    expect(reservesOf(null)).toBeNull();
   });
 });
 
