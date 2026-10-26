@@ -925,3 +925,21 @@ Owner request: the web app follows the XRPL Commons look (an XRPL showcase app w
 - **Nits:** the SDK's `status_words.h` (`SWO_*`) instead of hand-copied status words (a test double of the header joins `include_pq/`, and `test_pq_root` asserts the wire values as numbers); the `../` includes of `pq_root.c` and `entry.c` replaced by plain names (two include directories added for the test).
 - **Results:** cmocka in `ledger-app-builder-lite` + `libssl-dev`: test_pq_root 26/26, test_policy 23/23, test_printers, test_swap, test_tx unchanged. Ragger on Speculos, Stax only: the whole standalone suite, 144 passed, 41 skipped (the skips are the suite's own device conditions). Built for the Stax and the Nano S Plus with no new warning; Stax `bin/app.hex` sha256 `0bad479b266bc13a…`, application hash `03035f570409ec61…`.
 - **Not done:** nothing loaded on the Stax; the classical path keeps its upstream status page after a cancelled review (it still says "signed" there, `sign_transaction.c`); no Ragger run on the other four devices.
+
+## 2026-10-25: after the hackathon: result, the maintained copy, and the demo remarks fixed
+
+- **Result:** carbs won the Ledger Protocol Innovation track ($4,000). The judged version is `STOOOKEEE/carbs` at the tag `submission` (`ce42905`); this copy, `gamween/carbs`, carries everything after it.
+- **Demo remarks fixed** (`polish/app-fixes`, 8 commits):
+  - the device status words the UI showed raw get a sentence (`0x650F`: open the XRP app);
+  - `infra/standalone.cfg` sets mainnet's reserves (1 XRP, 0.2 XRP per object), and the Account screen shows what the node reports;
+  - a Ledger account the device already set up is recognised and reused (a second run used to fail at `SetRegularKey` with `tefMASTER_DISABLED`), with the non-secret profile kept per node across reloads;
+  - the wallet dialog connects a real Stax over WebHID, and the SIMULATED badge stays on the simulated Stax only;
+  - the front names the five amendments, from a list a test checks against `features.macro` and the cfg.
+- **Full post-quantum profiles:** the P-256 Mac account is gone from the web app. The Mac account now seals an ML-DSA-44 key in the browser, opened by Touch ID through the WebAuthn PRF extension (the vault of #106, moved to `@carbs/sessions`). That key becomes the `RegularKey`, and the master key is disabled after an ML-DSA-44 proof, only once the sealed key reads back from storage. Session keys are ML-DSA-44. Apple's platform authenticator cannot create an `alg: -48` passkey, hence PRF. The node and `@carbs/sessions` keep their P-256 code.
+- **Upstream (Ledger only, after the owner's go):** LedgerHQ/device-sdk-ts#2052 and LedgerHQ/app-xrp#101, documentation only. The P-256 `PasskeyID` binding in rippled is not pursued: the base defect stays documented.
+- **Checked:** `pnpm format:check`, `pnpm typecheck`, `pnpm test`: core 132, signer kit 205, ledger 74, web 329 (plus 5 node tests), passkey wallet 7, scripts 12. The web build passes.
+- **Not checked:**
+  - the wallet dialog's USB entry, the `0x650F` message and the reuse of a set-up account ran against software doubles only, not on the Stax;
+  - PRF with a real Touch ID was never run;
+  - the team node keeps 10 XRP and 2 XRP until it restarts from a fresh ledger with the new cfg;
+  - `pnpm --filter web lint` reports 3 errors in files these commits did not touch.
