@@ -5,11 +5,14 @@ import { createWalletAdapters, walletNetwork } from "~/lib/wallets/adapters";
 import { createWalletsApi } from "~/lib/wallets/api";
 import { browserPasskeySource } from "~/lib/wallets/passkey";
 
-// The wallet entry lists three adapters and nothing else: Ledger Stax, Passkey (this Mac)
-// and a throw-away Demo account. They need no API key and load no third-party script.
+// The wallet entry lists four adapters and nothing else: the real Ledger Stax over USB, its
+// simulated double, Passkey (this Mac) and a throw-away Demo account. They need no API key and load no third-party script.
 export default defineNuxtPlugin((nuxtApp) => {
-  const { backend, demo, network } = sharedAppContext();
-  const adapters = createWalletAdapters({ backend, demo, network }, browserPasskeySource());
+  const { backend, demo, network, deviceSelection } = sharedAppContext();
+  const adapters = createWalletAdapters(
+    { backend, demo, network, device: deviceSelection },
+    browserPasskeySource(),
+  );
 
   nuxtApp.vueApp.use(
     createXrplConnect({

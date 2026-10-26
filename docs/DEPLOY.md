@@ -44,7 +44,7 @@ To use a node of ours on another host, put it behind TLS (a reverse proxy that t
 
 ## Wallets
 
-The wallet entry offers a Ledger Stax, a passkey on this Mac and a demo account, with no API key and no third-party service. A passkey needs a secure context: `https://` or `http://localhost`. Over plain `http://` on a LAN address the browser exposes no WebAuthn and the entry says so.
+The wallet entry offers a real Ledger Stax over USB (on a live node), a simulated one, a passkey on this Mac and a demo account, with no API key and no third-party service. A passkey needs a secure context: `https://` or `http://localhost`. Over plain `http://` on a LAN address the browser exposes no WebAuthn and the entry says so.
 
 ## The Mac account demo needs our own node
 
@@ -52,7 +52,7 @@ A passkey signs with WebAuthn, and the public AlphaNet's validators may refuse s
 
 ## Browsers
 
-The Ledger path uses WebHID. **Use Chrome.** Brave and Firefox may not expose `navigator.hid`; the Account screen says so when it is missing. The default device is the SIMULATED one, which works in any browser; a real Stax over USB is picked on a click (Device Management Kit, `connectLedger`).
+The Ledger path uses WebHID. **Use Chrome.** Brave and Firefox may not expose `navigator.hid`; the Account screen says so when it is missing. The default device is the SIMULATED one, which works in any browser; a real Stax over USB is picked on a click (Device Management Kit, `connectLedger`), on the Account screen or with the wallet entry's Ledger Stax (USB), on the local or team node only.
 
 ## Security headers (set them at the host)
 

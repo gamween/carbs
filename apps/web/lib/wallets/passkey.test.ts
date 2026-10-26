@@ -75,23 +75,35 @@ describe("browser passkey creation", () => {
 });
 
 describe("Ledger Stax availability", () => {
-  it("needs WebHID on a live backend, not on the simulated one", async () => {
+  it("offers the simulated Stax everywhere, the real one only on a live node with WebHID", async () => {
     const ctx = createAppContext();
-    const simulated = createWalletAdapters(
-      { backend: ctx.backend, demo: ctx.demo, network: ctx.network },
+    const host = {
+      demo: ctx.demo,
+      network: ctx.network,
+      device: ctx.deviceSelection,
+    };
+    const simulation = createWalletAdapters(
+      { ...host, backend: ctx.backend },
       softwarePasskeySource(),
     );
-    expect(await simulated[0]?.isAvailable()).toBe(true);
-    Reflect.deleteProperty(navigator, "hid");
-    const live = createWalletAdapters(
-      {
-        backend: { ...ctx.backend, device: { ...ctx.backend.device, mode: "live" } },
-        demo: ctx.demo,
-        network: ctx.network,
-      },
-      softwarePasskeySource(),
-    );
-    expect(await live[0]?.isAvailable()).toBe(false);
+    const usb = (adapters: typeof simulation) => adapters.find((a) => a.id === "ledger-stax-usb");
+    const double = (adapters: typeof simulation) =>
+      adapters.find((a) => a.id === "ledger-stax-simulated");
+    Object.defineProperty(navigator, "hid", { value: {}, configurable: true });
+    try {
+      expect(await double(simulation)?.isAvailable()).toBe(true);
+      expect(await usb(simulation)?.isAvailable()).toBe(false);
+      const live = createWalletAdapters(
+        { ...host, backend: { ...ctx.backend, mode: "live" } },
+        softwarePasskeySource(),
+      );
+      expect(await usb(live)?.isAvailable()).toBe(true);
+      Reflect.deleteProperty(navigator, "hid");
+      expect(await usb(live)?.isAvailable()).toBe(false);
+      expect(await double(live)?.isAvailable()).toBe(true);
+    } finally {
+      Reflect.deleteProperty(navigator, "hid");
+    }
     expect(WEBHID_MESSAGE).toContain("Use Chrome");
   });
 });

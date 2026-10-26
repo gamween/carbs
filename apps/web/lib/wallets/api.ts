@@ -33,6 +33,9 @@ export interface WalletsState {
   error: string | null;
 }
 
+export const STAX_NEEDS_LIVE_NODE =
+  "Pick Local node or Team node under Node, at the top: the real Stax signs for a node that has the amendment, not for the simulation.";
+
 const PASSKEY_UNAVAILABLE =
   "WebAuthn needs a browser with passkeys and a secure context (https or localhost).";
 
@@ -56,8 +59,10 @@ export function createWalletsApi(
     for (const adapter of adapters) {
       const available = await adapter.isAvailable();
       const reason =
-        adapter.id === "ledger-stax"
-          ? WEBHID_MESSAGE
+        adapter.id === "ledger-stax-usb"
+          ? backend.mode === "simulated"
+            ? STAX_NEEDS_LIVE_NODE
+            : WEBHID_MESSAGE
           : adapter.id === "passkey-mac"
             ? PASSKEY_UNAVAILABLE
             : null;
@@ -69,7 +74,6 @@ export function createWalletsApi(
           adapter.description,
           backend.mode === "simulated",
           authenticatorSimulated,
-          backend.device.mode === "simulated",
         ),
       });
     }

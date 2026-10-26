@@ -19,14 +19,18 @@ export interface LedgerSignals {
   reviewing: boolean;
 }
 
-export const LEDGER_WALLET_ID = "ledger-stax";
+/** The two Ledger Stax entries of the wallet modal: the real one over USB and the simulated one. */
+export const LEDGER_WALLET_IDS: ReadonlySet<string | null> = new Set([
+  "ledger-stax-usb",
+  "ledger-stax-simulated",
+]);
 export const LEDGER_PROFILE = "ledger";
 
 export function isLedgerMode(signals: LedgerSignals): boolean {
   return (
     signals.profile === LEDGER_PROFILE ||
-    signals.walletId === LEDGER_WALLET_ID ||
-    signals.connectingWalletId === LEDGER_WALLET_ID ||
+    LEDGER_WALLET_IDS.has(signals.walletId) ||
+    LEDGER_WALLET_IDS.has(signals.connectingWalletId) ||
     signals.deviceConnected ||
     signals.deviceBusy ||
     signals.reviewing

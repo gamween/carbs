@@ -10,30 +10,39 @@ async function opened() {
 }
 
 describe("Wallet entry", () => {
-  it("lists the three wallets and nothing else", async () => {
+  it("lists the four wallets and nothing else", async () => {
     const { wrapper } = await opened();
     const ids = wrapper
       .findAll("[data-testid^='wallet-']")
       .map((n) => n.attributes("data-testid"))
-      .filter((id) => /^wallet-(ledger-stax|passkey-mac|demo-account)$/.test(id ?? ""));
-    expect(ids).toEqual(["wallet-ledger-stax", "wallet-passkey-mac", "wallet-demo-account"]);
+      .filter((id) =>
+        /^wallet-(ledger-stax-usb|ledger-stax-simulated|passkey-mac|demo-account)$/.test(id ?? ""),
+      );
+    expect(ids).toEqual([
+      "wallet-ledger-stax-usb",
+      "wallet-ledger-stax-simulated",
+      "wallet-passkey-mac",
+      "wallet-demo-account",
+    ]);
     const text = wrapper.text();
     expect(text).not.toMatch(/Xaman|GemWallet|WalletConnect/i);
   });
 
   it("shows, for each, the key type, who signs what and the SIMULATED badge", async () => {
     const { wrapper } = await opened();
-    for (const id of ["ledger-stax", "passkey-mac", "demo-account"]) {
+    for (const id of ["ledger-stax-simulated", "passkey-mac", "demo-account"]) {
       const card = wrapper.get(`[data-testid='wallet-${id}']`);
       expect(card.get("[data-testid='key-type']").text().length).toBeGreaterThan(10);
       expect(card.findAll("[data-testid='signs'] li").length).toBeGreaterThanOrEqual(2);
       expect(card.find("[data-testid='sim-badge']").exists()).toBe(true);
     }
     expect(
-      wrapper.get("[data-testid='wallet-ledger-stax'] [data-testid='simulated-parts']").text(),
+      wrapper
+        .get("[data-testid='wallet-ledger-stax-simulated'] [data-testid='simulated-parts']")
+        .text(),
     ).toBe("node, Stax");
     expect(
-      wrapper.get("[data-testid='wallet-ledger-stax'] [data-testid='key-type']").text(),
+      wrapper.get("[data-testid='wallet-ledger-stax-simulated'] [data-testid='key-type']").text(),
     ).toContain("ML-DSA-44");
     expect(
       wrapper.get("[data-testid='wallet-passkey-mac'] [data-testid='key-type']").text(),
@@ -53,9 +62,18 @@ describe("Wallet entry", () => {
     expect(wrapper.find("[data-testid='wallet-open']").exists()).toBe(true);
   });
 
-  it("connects the Ledger Stax through the simulated device and the passkey through the software authenticator", async () => {
+  it("never badges the real Stax, and says on the simulation that it needs a live node", async () => {
+    const { wrapper } = await opened();
+    const usb = wrapper.get("[data-testid='wallet-ledger-stax-usb']");
+    expect(usb.find("[data-testid='sim-badge']").exists()).toBe(false);
+    expect(usb.get("[data-testid='key-type']").text()).toContain("ML-DSA-44");
+    expect(usb.get("[data-testid='unavailable']").text()).toContain("Local node or Team node");
+    expect(usb.get("[data-testid='connect-ledger-stax-usb']").attributes("disabled")).toBeDefined();
+  });
+
+  it("connects the simulated Ledger Stax and the passkey through the software authenticator", async () => {
     const stax = await opened();
-    await stax.wrapper.get("[data-testid='connect-ledger-stax']").trigger("click");
+    await stax.wrapper.get("[data-testid='connect-ledger-stax-simulated']").trigger("click");
     await flushPromises();
     expect(stax.ctx.demo.state.profile).toBe("ledger");
 
@@ -68,7 +86,7 @@ describe("Wallet entry", () => {
   it("shows the error of a rejected device and stays open", async () => {
     const { wrapper, ctx } = await opened();
     ctx.sim.simDevice.setApprover(async () => false);
-    await wrapper.get("[data-testid='connect-ledger-stax']").trigger("click");
+    await wrapper.get("[data-testid='connect-ledger-stax-simulated']").trigger("click");
     await flushPromises();
     expect(wrapper.get("[data-testid='wallet-error']").text()).toContain("Rejected on the device");
     expect(wrapper.find("[data-testid='wallet-modal']").exists()).toBe(true);

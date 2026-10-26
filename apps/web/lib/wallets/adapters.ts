@@ -2,9 +2,10 @@
  * The wallet adapters of the web app, written against the `WalletAdapter` interface of
  * xrpl-connect 1.0.0 (`apps/web/node_modules/xrpl-connect/index.d.ts:1928`, which declares
  * `id`, `name`, `capabilities`, `isAvailable`, `connect`, `disconnect`, `getAccount`,
- * `getNetwork`, `sign`, `signAndSubmit`, `signMessage`, `on`, `off`). Three adapters, and
- * only these: the Ledger Stax (Device Management Kit only: the legacy ledgerjs adapter of
- * xrpl-connect is never imported), a passkey on this Mac, and a throw-away demo account.
+ * `getNetwork`, `sign`, `signAndSubmit`, `signMessage`, `on`, `off`). Four adapters, and
+ * only these: the real Ledger Stax over USB and its SIMULATED software double (Device
+ * Management Kit only: the legacy ledgerjs adapter of xrpl-connect is never imported), a
+ * passkey on this Mac, and a throw-away demo account.
  * None of them needs an API key or loads a third-party script.
  */
 import type {
@@ -23,11 +24,13 @@ import { DEFAULT_FEE_DROPS } from "../constants";
 import type { Demo, Profile } from "../demo";
 import type { NetworkStore } from "../network-store";
 import type { Backend, KeyHandle, TxJson } from "../ports";
+import { NOT_CONNECTED_MESSAGE, type DeviceSelection } from "../live/device-selection";
 import type { PasskeyCredential } from "@carbs/sessions";
 import type { PasskeyMaterial } from "./passkey";
 import {
   DEMO_ACCOUNT,
-  LEDGER_STAX,
+  LEDGER_STAX_SIMULATED,
+  LEDGER_STAX_USB,
   PASSKEY_MAC,
   type WalletDescription,
   type WalletId,
@@ -38,6 +41,8 @@ export interface WalletHost {
   backend: Backend;
   demo: Demo;
   network: NetworkStore;
+  /** The device of the live backend: the real Stax over USB, or the software double. */
+  device: DeviceSelection;
 }
 
 /** Where a passkey comes from: the browser's authenticator, or the software one in tests. */
@@ -198,18 +203,42 @@ async function createFor(host: WalletHost, profile: Profile, adapterName: string
   if (!ok) throw new Error(host.demo.state.error ?? `${adapterName} could not set up the account`);
 }
 
-/** The Ledger Stax through the Device Management Kit: the simulated double or a real one (USB). */
-export class LedgerStaxAdapter extends CarbsAdapter {
-  readonly id = "ledger-stax";
-  readonly name = LEDGER_STAX.name;
-  readonly description = LEDGER_STAX;
+/**
+ * The real Ledger Stax over USB, through the Device Management Kit (WebHID). Only on a live
+ * node: the Stax signs for a node that has the amendment. The connection runs first, inside
+ * the click that opened it, since WebHID's device picker needs that gesture.
+ */
+export class LedgerStaxUsbAdapter extends CarbsAdapter {
+  readonly id = "ledger-stax-usb";
+  readonly name = LEDGER_STAX_USB.name;
+  readonly description = LEDGER_STAX_USB;
 
   async isAvailable(): Promise<boolean> {
-    // The simulated Stax needs no browser support; the real one needs WebHID.
-    return this.host.backend.device.mode === "simulated" || hasWebHid();
+    return this.host.backend.mode === "live" && hasWebHid();
   }
 
   protected async open(): Promise<void> {
+    const { device } = this.host;
+    await device.choose("usb");
+    await device.connect();
+    if (!device.connected) throw new Error(device.error ?? NOT_CONNECTED_MESSAGE);
+    await createFor(this.host, "ledger", this.name);
+  }
+}
+
+/** The software double of the Stax in this page (SIMULATED): the same flow with no device. */
+export class LedgerStaxSimulatedAdapter extends CarbsAdapter {
+  readonly id = "ledger-stax-simulated";
+  readonly name = LEDGER_STAX_SIMULATED.name;
+  readonly description = LEDGER_STAX_SIMULATED;
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  protected async open(): Promise<void> {
+    // On a live node the device follows the choice: going back to the double closes a real Stax.
+    if (this.host.backend.mode === "live") await this.host.device.choose("simulated");
     await createFor(this.host, "ledger", this.name);
   }
 }
@@ -265,10 +294,11 @@ export class DemoAccountAdapter extends CarbsAdapter {
 
 export type { CarbsAdapter };
 
-/** The three adapters, in display order. */
+/** The four adapters, in display order. */
 export function createWalletAdapters(host: WalletHost, passkeys: PasskeySource): CarbsAdapter[] {
   return [
-    new LedgerStaxAdapter(host),
+    new LedgerStaxUsbAdapter(host),
+    new LedgerStaxSimulatedAdapter(host),
     new PasskeyMacAdapter(host, passkeys),
     new DemoAccountAdapter(host),
   ];

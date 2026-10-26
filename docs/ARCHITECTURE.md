@@ -73,7 +73,7 @@ A Nuxt 3 single-page app (`ssr: false`), generated from the `create-xrp` templat
 | Ledger Stax                       | review lines of spec 7.3                                                              | the contract-following software device of `@carbs/ledger` by default, or a real Stax over USB (WebHID), opened on a click                                         |
 | Passkey                           | the software authenticator of `@carbs/sessions` (real P-256, no prompt)               | the browser's WebAuthn, when the person presses Connect (**never run against a real authenticator**: the human-only ceremony of PLAN section 6)                   |
 
-**Wallet entry.** The Connect wallet modal lists three adapters against the `WalletAdapter` interface of xrpl-connect 1.0.0: Ledger Stax (Device Management Kit only), Passkey (this Mac) and a throw-away Demo account. No API key, no third-party wallet.
+**Wallet entry.** The Connect wallet modal lists four adapters against the `WalletAdapter` interface of xrpl-connect 1.0.0: Ledger Stax (USB), the real device through the Device Management Kit (WebHID, live node only), Ledger Stax (simulated), its software double (badged SIMULATED), Passkey (this Mac) and a throw-away Demo account. No API key, no third-party wallet.
 
 **Security headers.** A Content-Security-Policy with `script-src 'self'` (no `unsafe-inline`, no hash, no third-party script, font or image) built from the configured networks and explorers (`lib/csp.ts`, `lib/networks.ts`); Nuxt's inline runtime-config script is moved into a same-origin file by a Nitro plugin, in the dev server, the Node server and the static build. A page served over https only accepts `wss://` and `https://` node URLs.
 

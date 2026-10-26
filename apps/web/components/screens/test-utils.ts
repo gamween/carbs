@@ -49,7 +49,7 @@ export function mountScreen(
   });
   if (options.status !== undefined) ctx.network.state.node = options.status.active;
   const adapters = createWalletAdapters(
-    { backend: ctx.backend, demo: ctx.demo, network: ctx.network },
+    { backend: ctx.backend, demo: ctx.demo, network: ctx.network, device: ctx.deviceSelection },
     softwarePasskeySource(),
   );
   const manager = new WalletManager({ adapters, autoConnect: false, logger: { level: "error" } });
