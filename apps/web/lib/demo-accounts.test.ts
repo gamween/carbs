@@ -1,7 +1,12 @@
 import { SoftwarePrfOracle, browserPrfOracle } from "@carbs/sessions";
 import { describe, expect, it } from "vitest";
 import { createSimBackend } from "./backend";
-import { createDemo, OTHER_DEVICE_MESSAGE, VAULT_NOT_KEPT_MESSAGE } from "./demo";
+import {
+  createDemo,
+  hasOnlyPostQuantumAuthority,
+  OTHER_DEVICE_MESSAGE,
+  VAULT_NOT_KEPT_MESSAGE,
+} from "./demo";
 import { createLiveBackend } from "./live/backend";
 import { FakeAlphaNet } from "./live/fake-alphanet";
 import { NETWORKS } from "./networks";
@@ -266,16 +271,44 @@ describe("the account across a page reload", () => {
     expect(storage.map.size).toBe(0);
   });
 
-  it("forgets the saved account on disconnect and when a new setup starts", async () => {
+  it("keeps the saved account on disconnect and until a new account is saved over it", async () => {
     const { backend } = rig(true);
     const storage = memoryStorage();
     const demo = createDemo(backend, { storage, nodeKey: NODE });
     await demo.createAccount("ledger");
+    const kept = storage.map.get(PROFILE_STORAGE_KEY);
+    expect(kept).toBeDefined();
+    // A disconnect leaves the page's account; what a reload needs stays (a Mac account's
+    // sealed key is its only copy).
     demo.disconnect();
-    expect(storage.map.has(PROFILE_STORAGE_KEY)).toBe(false);
-    await demo.createAccount("ledger");
+    expect(demo.state.ready).toBe(false);
+    expect(storage.map.get(PROFILE_STORAGE_KEY)).toBe(kept);
+    // A demo account outlives nothing, so it does not replace the kept account.
     expect(await demo.createAccount("demo")).toBe(true);
-    expect(storage.map.has(PROFILE_STORAGE_KEY)).toBe(false);
+    expect(storage.map.get(PROFILE_STORAGE_KEY)).toBe(kept);
+    // The kept account comes back at the next load.
+    const after = createDemo(backend, { storage, nodeKey: NODE });
+    expect((await after.restore())?.address).toBe(parseSavedProfile(kept ?? "")?.address);
+  });
+
+  it("restores once: a second call neither resets the account nor drops its session key", async () => {
+    const { backend } = rig(true);
+    const storage = memoryStorage();
+    await createDemo(backend, { storage, nodeKey: NODE }).createAccount("ledger");
+    const after = createDemo(backend, { storage, nodeKey: NODE });
+    await after.restore();
+    const opened = await after.openSession({
+      mode: "C",
+      durationSec: 60,
+      permissions: [],
+      capDrops: 5_000_000,
+    });
+    expect(opened?.code).toBe("tesSUCCESS");
+    const key = after.state.sessionKey;
+    expect(key).not.toBeNull();
+    expect(await after.restore()).not.toBeNull();
+    expect(after.state.ready).toBe(true);
+    expect(after.state.sessionKey).toBe(key);
   });
 
   it("works with storage the browser blocks: the account then lasts for the page", async () => {
@@ -382,6 +415,17 @@ describe("the post-quantum Mac account (PRF vault)", () => {
     expect(last?.tx["PasskeySignature"]).toBeUndefined();
   });
 
+  it("derives the sealed key's address from its public key, not from the vault's record", async () => {
+    const { backend } = await liveBackend();
+    const storage = memoryStorage();
+    await createDemo(backend, { storage, nodeKey: NODE }).createAccount("mac");
+    const saved = parseSavedProfile(storage.map.get(PROFILE_STORAGE_KEY) ?? null);
+    if (saved?.vault == null) throw new Error("no vault");
+    expect(backend.wallet.openVaultKey(saved.vault).address).toBe(saved.vault.mlDsaAddress);
+    const edited = { ...saved.vault, mlDsaAddress: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh" };
+    expect(() => backend.wallet.openVaultKey(edited)).toThrow(/does not match/);
+  });
+
   it("does not open a vault moved to another account (the address is the associated data)", async () => {
     const { backend } = await liveBackend();
     const storage = memoryStorage();
@@ -470,5 +514,40 @@ describe("the saved profile as read back", () => {
         JSON.stringify({ ...valid, authority: { ...valid.authority, publicKey: "xyz" } }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("an account whose only authority is the ML-DSA-44 key", () => {
+  const info = {
+    address: "rAccount",
+    balanceDrops: 10_000_000,
+    sequence: 5,
+    ownerCount: 0,
+    regularKey: "rMlDsa",
+    masterDisabled: true,
+  };
+  const objects = { sessions: [], passkeys: [], signerList: null };
+
+  it("is recognised with the master key disabled and the key as regular key, nothing else", () => {
+    expect(hasOnlyPostQuantumAuthority(info, objects, "rMlDsa")).toBe(true);
+  });
+
+  it("is refused when another key keeps control", () => {
+    expect(hasOnlyPostQuantumAuthority({ ...info, masterDisabled: false }, objects, "rMlDsa")).toBe(
+      false,
+    );
+    expect(hasOnlyPostQuantumAuthority({ ...info, regularKey: "rOther" }, objects, "rMlDsa")).toBe(
+      false,
+    );
+    expect(hasOnlyPostQuantumAuthority(info, { ...objects, passkeys: ["F6AB"] }, "rMlDsa")).toBe(
+      false,
+    );
+    expect(
+      hasOnlyPostQuantumAuthority(
+        info,
+        { ...objects, signerList: { quorum: 1, entries: [{ account: "rSigner", weight: 1 }] } },
+        "rMlDsa",
+      ),
+    ).toBe(false);
   });
 });

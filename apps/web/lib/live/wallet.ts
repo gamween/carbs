@@ -92,10 +92,15 @@ export class LiveWallet implements WalletPort {
 
   openVaultKey(vault: PqVault): KeyHandle {
     const { prf, defs } = this;
+    // The address comes from the sealed public key, not from the vault's own record of it.
+    const address = addressFromPublicKey(vault.publicKey);
+    if (address !== vault.mlDsaAddress) {
+      throw new Error("The sealed key's public key does not match the address it was saved with");
+    }
     return {
       algorithm: "mldsa44",
       publicKey: vault.publicKey,
-      address: vault.mlDsaAddress,
+      address,
       async sign(tx) {
         const secret = await prf.oracle.evaluate(vault.credentialId, hexToBytes(vault.salt));
         let seed: Uint8Array;

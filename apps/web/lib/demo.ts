@@ -65,8 +65,22 @@ const MAC_KEY_LABEL = "ML-DSA-44 key (sealed, opened by Touch ID)";
 class ProfileMismatch extends Error {}
 
 /** A Ledger account is set up when its master key is disabled and its regular key is the device's ML-DSA-44 key. */
-export function isLedgerAccountSetUp(info: AccountInfo, mlDsaAddress: string): boolean {
-  return info.masterDisabled && info.regularKey === mlDsaAddress;
+/**
+ * Whether the account's only authority is the ML-DSA-44 key at `mlDsaAddress`: master key
+ * disabled, that key as regular key, and no signer list or passkey that would keep another
+ * (classical) key in control. The node does not list delegates here; they are not checked.
+ */
+export function hasOnlyPostQuantumAuthority(
+  info: AccountInfo,
+  objects: AccountObjects,
+  mlDsaAddress: string,
+): boolean {
+  return (
+    info.masterDisabled &&
+    info.regularKey === mlDsaAddress &&
+    objects.signerList === null &&
+    objects.passkeys.length === 0
+  );
 }
 
 /**
@@ -307,7 +321,9 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
 
   async function createAccount(profile: Profile): Promise<boolean> {
     const done = await guarded(async () => {
-      reset();
+      // The account kept for a reload stays until the new one is saved over it: a cancelled or
+      // failed setup must not lose a Mac account's only sealed key.
+      reset({ keepSaved: true });
       state.profile = profile;
       if (profile === "mac") await setupMac();
       else if (profile === "ledger") await setupLedger();
@@ -326,7 +342,7 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
    */
   async function useExistingLedgerAccount(): Promise<boolean> {
     const done = await guarded(async () => {
-      reset();
+      reset({ keepSaved: true });
       state.profile = "ledger";
       const { classical, pq } = await readLedgerKeys();
       state.address = classical.address;
@@ -337,9 +353,10 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
           "This device's account does not exist on this node yet: set it up first (Set up the Ledger account).",
         );
       }
-      if (!isLedgerAccountSetUp(info, pq.address)) {
+      const objects = await backend.node.accountObjects(classical.address);
+      if (!hasOnlyPostQuantumAuthority(info, objects, pq.address)) {
         throw new Error(
-          "This device's account is not set up yet (its master key is enabled, or its regular key is not the device's ML-DSA-44 key): set it up first.",
+          "This device's account is not set up yet (its master key is enabled, its regular key is not the device's ML-DSA-44 key, or a signer list or passkey keeps another key in control): set it up first.",
         );
       }
       addStep(
@@ -404,11 +421,15 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
   async function restore(): Promise<SavedProfile | null> {
     const saved = readSavedProfile(storage, nodeKey);
     if (saved === null) return null;
+    // Already restored, or another action is running: nothing to do.
+    if (state.ready && state.address === saved.address) return saved;
+    if (state.busy) return null;
     state.busy = true;
     try {
       const info = await backend.node.accountInfo(saved.address);
       if (info === null) throw new ProfileMismatch(`${saved.address} is not on this node any more`);
-      if (!isLedgerAccountSetUp(info, saved.authority.address)) {
+      const objects = await backend.node.accountObjects(saved.address);
+      if (!hasOnlyPostQuantumAuthority(info, objects, saved.authority.address)) {
         throw new ProfileMismatch(
           `${saved.address} no longer has its ML-DSA-44 key as regular key with the master key disabled`,
         );
@@ -423,6 +444,7 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
       } else {
         if (saved.vault === null) throw new ProfileMismatch("the sealed key is missing");
         const key = backend.wallet.openVaultKey(saved.vault);
+        // The backend derives the key's address from the sealed public key itself.
         if (key.address !== saved.authority.address) {
           throw new ProfileMismatch("the sealed key is not the account's regular key");
         }
@@ -530,7 +552,12 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
     state.address = address;
     addStep("Read the device keys (secp256k1 and ML-DSA-44)").status = "ok";
     const existing = await backend.node.accountInfo(address);
-    if (existing !== null && isLedgerAccountSetUp(existing, pq.address)) {
+    const existingObjects = existing === null ? null : await backend.node.accountObjects(address);
+    if (
+      existing !== null &&
+      existingObjects !== null &&
+      hasOnlyPostQuantumAuthority(existing, existingObjects, pq.address)
+    ) {
       addStep(
         "This Stax's account is already set up (master key disabled, the device's ML-DSA-44 key as regular key): continuing with it, nothing sent",
       ).status = "ok";
@@ -539,7 +566,7 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
     }
     if (existing?.masterDisabled === true) {
       throw new Error(
-        `${address} has its master key disabled and a regular key that is not this device's ML-DSA-44 key: this page cannot set it up again.`,
+        `${address} has its master key disabled, and either its regular key is not this device's ML-DSA-44 key or a signer list or passkey keeps another key in control: this page cannot set it up again.`,
       );
     }
     if (existing === null) await fund(address);
@@ -715,8 +742,12 @@ export function createDemo(backend: Backend, options: DemoOptions = {}) {
     return fullAuth?.address ?? null;
   }
 
+  /**
+   * Leaves the account in this page. What this browser kept for a reload stays: for a Mac
+   * account the sealed key is the only copy, so a disconnect must not delete it.
+   */
   function disconnect(): void {
-    reset();
+    reset({ keepSaved: true });
   }
 
   /** Simulated clock only: let ledger time pass. */

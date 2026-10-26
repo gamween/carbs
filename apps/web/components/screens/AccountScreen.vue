@@ -38,7 +38,7 @@ const PROFILES = computed<readonly { id: Profile; title: string; body: string; n
       id: "mac",
       title: "Mac account (Touch ID)",
       body: `An ML-DSA-44 key as regular key, master key disabled after an ML-DSA-44 proof. The key is sealed in this browser and ${macUnlock.value}; it opens sessions, and session keys are ML-DSA-44 too. No P-256 key reaches the ledger: the passkey is only the PRF oracle.`,
-      note: "Why PRF: Apple's platform authenticator cannot create an ML-DSA-44 passkey (COSE -48), so the passkey releases a secret (WebAuthn PRF, then HKDF-SHA256 and AES-256-GCM bound to the account's address) that unlocks the ML-DSA-44 key. PRF with a real Touch ID has not been verified yet, only a virtual authenticator. The sealed key lives in this browser only: clearing its site data loses the account.",
+      note: "Why PRF: Apple's platform authenticator cannot create an ML-DSA-44 passkey (COSE -48), so the passkey releases a secret (WebAuthn PRF, then HKDF-SHA256 and AES-256-GCM bound to the account's address) that unlocks the ML-DSA-44 key. PRF with a real Touch ID has not been verified yet, only a virtual authenticator. The sealed key lives in this browser only, and only that passkey opens it: clearing this site's data or deleting the passkey loses the account. The passkey's authenticator answers, which is Touch ID on a Mac unless the browser offers another one.",
     },
     {
       id: "ledger",

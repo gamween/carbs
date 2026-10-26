@@ -71,11 +71,6 @@ export default defineNuxtPlugin(async (nuxtApp) => {
   void ctx.demo.tick();
   // The simulated ledger closes on its own, at the pace of the real one; a live node is polled.
   window.setInterval(() => {
-    // The account of the last visit on this node, if this browser kept it (live node only). A
-    // Ledger account signs on the real Stax: its choice comes back, the connection is a click.
-    void ctx.demo.restore().then(async (saved) => {
-      if (saved?.device === "usb") await ctx.deviceSelection.choose("usb");
-    });
     void ctx.demo.tick();
   }, SIM_TICK_MS);
 });
