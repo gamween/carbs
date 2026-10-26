@@ -4,7 +4,7 @@
 
 **Post-quantum, delegable signing for the XRP Ledger: an ML-DSA-44 root key on a Ledger Stax, post-quantum passkeys, and signing sessions whose rules the ledger enforces and the device shows.**
 
-[![Winner](https://img.shields.io/badge/%F0%9F%8F%86%20Winner-Ledger%20Protocol%20Innovation-f5b301?style=flat-square)](#winner-of-the-ledger-protocol-innovation-track)
+[![Winner](https://img.shields.io/badge/%F0%9F%8F%86%20Winner-Ledger%20Protocol%20Innovation-f5b301?style=flat-square)](#how-carbs-fits-the-tracks)
 [![Live demo](https://img.shields.io/badge/demo-carbs--kappa.vercel.app-000?style=flat-square)](https://carbs-kappa.vercel.app)
 [![rippled](https://img.shields.io/badge/rippled-5%20amendments-363636?style=flat-square)](#on-the-ledger)
 [![Ledger Stax](https://img.shields.io/badge/Ledger%20Stax-ML--DSA--44-7c3aed?style=flat-square)](#on-the-device)
@@ -14,7 +14,7 @@
 
 🏆 **Winner — Ledger Protocol Innovation track ($4,000) · XRPL Hackathon NYC · New York, 24–25 October 2026**
 
-**[Open the app](https://carbs-kappa.vercel.app)** · **[Demo video](https://youtu.be/aJu0FsRNgjk)** · **[Pitch video](https://youtube.com/shorts/xvWcqh40NrA)** · **[Sessions XLS draft](./docs/XLS-Sessions.md)** · **[PQ passkeys draft](./docs/XLS-PQ-Passkeys.md)** · **[Developer feedback](./docs/ledger-dx-feedback.md)** · **[Architecture](./docs/ARCHITECTURE.md)** · **[DEVLOG](./docs/DEVLOG.md)**
+**[Open the app](https://carbs-kappa.vercel.app)** · **[Demo video](https://youtu.be/aJu0FsRNgjk)** · **[Pitch video](https://youtube.com/shorts/xvWcqh40NrA)** · **[Sessions XLS draft](./docs/XLS-Sessions.md)** · **[Post-quantum passkeys draft](./docs/XLS-PQ-Passkeys.md)** · **[Developer feedback](./docs/ledger-dx-feedback.md)** · **[Specification](./FIANSO-SPEC.md)** · **[Architecture](./docs/ARCHITECTURE.md)** · **[DEVLOG](./docs/DEVLOG.md)**
 
 </div>
 
@@ -34,11 +34,11 @@ makes passkeys post-quantum too, and Ledger's **Security Key** app on the Stax c
 > computer. carbs moves the expiry, the caps and the post-quantum root into the protocol and the
 > device.
 
-> 🏆 **Winner of the Ledger Protocol Innovation track at the AI & Fintech XRPL Hackathon, New
-> York, 24–25 October 2026.** A 36-hour event run by XRPL Commons with Ripple, the XRPL Foundation,
-> Ledger, Mastercard, AWS and QuickNode. Ledger's [track brief](https://developers.ledger.com/xrplnyc)
-> asked for a real device and weighed developer-experience feedback "as much as the code"; ours
-> is [`docs/ledger-dx-feedback.md`](./docs/ledger-dx-feedback.md). The prize: $4,000 for the team.
+> 🏆 **Winner of the Ledger Protocol Innovation track at the XRPL Hackathon NYC, New York,
+> 24–25 October 2026**, a 36-hour event hosted by XRPL Commons. Ledger's
+> [track brief](https://developers.ledger.com/xrplnyc) put signing on a real device among what it
+> wanted to see and weighed developer-experience feedback "as much as the code"; ours is
+> [`docs/ledger-dx-feedback.md`](./docs/ledger-dx-feedback.md). The prize: $4,000 for the team.
 >
 > **This repository is the maintained copy.** The version the jury judged is
 > [`STOOOKEEE/carbs` at the tag `submission`](https://github.com/STOOOKEEE/carbs/tree/submission)
@@ -68,7 +68,7 @@ makes passkeys post-quantum too, and Ledger's **Security Key** app on the Stax c
 code that implements it, on the ledger and on the device; a
 [vertical pitch](https://youtube.com/shorts/xvWcqh40NrA) (2:52, narrated) tells the story for
 anyone. The Stax screens in them are Speculos emulator snapshots of the app, and the narration is
-text-to-speech from a voice cloned from Sofiane's.
+text-to-speech from a clone of Sofiane's voice.
 
 The web app is deployed at **https://carbs-kappa.vercel.app**, a static build of `apps/web`
 (deployment notes in [`docs/DEPLOY.md`](./docs/DEPLOY.md)). The **Node** choice in the header picks
@@ -168,7 +168,7 @@ them in clear. The account moves to it in three transactions, in an order the no
 ML-DSA key; then `asfDisableMaster`, which only the master key may set. The old classical key then
 gets `tefMASTER_DISABLED`. The client refuses the last step until the proof is validated, the key is
 shown recoverable (or backed up) and the account's other authorities are reviewed. Builds before 25
-October derived one public key on every device ([below](#every-claim-verified)).
+October derived the same key on every device ([below](#every-claim-verified)).
 
 **2. Sessions enforced by the ledger.** The account opens a session with **one ordinary
 signature** from a key that already has full authority. It is not a multisig. The session key then
@@ -199,8 +199,8 @@ most the cap plus one base fee. The owner revokes with any full-authority key, b
 ticket, and a session key can neither use the account's tickets nor outbid the owner's queued
 close.
 
-Two account profiles share the engine, and neither puts a classical key in the flow once the
-migration has disabled the master key:
+Two account profiles share the engine, and neither leaves a classical key with authority on the
+ledger once the migration has disabled the master key:
 
 | Profile                      | Full authority                                                                                  | Opens a session with                             | Session key                                      |
 | ---------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------ |
@@ -333,12 +333,13 @@ as a genuine Ledger. The screen proves the rules, not who holds the session key.
 
 ### On a real Ledger Stax
 
-| What                                             | Where                    | Result                                                                                                                                                         |
-| ------------------------------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Three ML-DSA-44 payments signed by the XRP app   | public AlphaNet, 24 Oct. | `tesSUCCESS`, verified with `@noble/post-quantum` before submission; see the correction below                                                                  |
-| A post-quantum passkey from the Security Key app | our standalone node      | `PasskeyListSet`, a 5 XRP `Payment` and a mode C `SigningSessionSet`, each a real CTAP2 assertion approved on the device, `tesSUCCESS`; 4 to 6 s per assertion |
-| The device's registration bytes                  | `packages/core` fixture  | the TypeScript parser reads them and returns the same key as python-fido2                                                                                      |
-| The web app's Ledger account                     | the team's node, 25 Oct. | `SetRegularKey`, the ML-DSA-44 proof and `asfDisableMaster`, each `tesSUCCESS`; the Stax refused a session above its policy (`0x6986`)                         |
+| What                                                                                  | Where                        | Result                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Three ML-DSA-44 payments, two signed by the XRP app and one by a throw-away spike app | public AlphaNet, 24 Oct.     | `tesSUCCESS`, verified with `@noble/post-quantum` before submission; see the correction below                                                                                                                                                                                                                |
+| A post-quantum passkey from the Security Key app                                      | our standalone node, 25 Oct. | `PasskeyListSet` (`DE46B0D8…`), a 5 XRP `Payment` (`D7AE42A4…`) and a mode C `SigningSessionSet` (`E4BBB04F…`), each a real CTAP2 assertion approved on the device, `tesSUCCESS`; 4 to 6 s per assertion                                                                                                     |
+| The device's registration bytes                                                       | `packages/core` fixture      | the TypeScript parser reads them and returns the same key as python-fido2                                                                                                                                                                                                                                    |
+| A `SigningSessionSet` review in modes C and P                                         | the Stax, 24 Oct.            | shown in clear on the Stax and signed with the classical and the ML-DSA-44 key, verified locally (not submitted: no node had the amendment yet)                                                                                                                                                              |
+| The web app's Ledger account                                                          | the team's node, 25 Oct.     | `SetRegularKey`, the ML-DSA-44 proof and `asfDisableMaster`, each `tesSUCCESS`, from the hosted site over WebHID; the Stax ran the build before the seed fix (#120), so its key is the zero-seed one of the correction below; the owner's policy refused a session with no maximum per payment on the device |
 
 The ML-DSA-44 payments on the public AlphaNet:
 
@@ -359,8 +360,8 @@ The ML-DSA-44 payments on the public AlphaNet:
 > account `rs3drH…` came from another app and derivation, which this correction does not cover.
 
 The public AlphaNet keeps a rolling window of recent ledgers, so it no longer serves these
-transactions; each account still shows an ML-DSA key account as `RegularKey` and its master key
-disabled. Account page:
+transactions; `account_info` still shows each account with an ML-DSA key account as `RegularKey`
+and its master key disabled. Account page:
 [`rGcT27…`](https://custom.xrpl.org/alphanet.xrpl.org/accounts/rGcT27HiGhoJWYRxqg9jcnPboGD4RGuLLm).
 
 ### The amendments, on our node
@@ -380,6 +381,10 @@ disabled. Account page:
 - **An independent vector.** A WebAuthn ML-DSA-44 assertion made by `@noble/post-quantum` over the
   signing data `ripple-binary-codec` encodes is verified by the node as it is, and refused with one
   bit changed.
+- **The wallet's end-to-end script** (`apps/passkey-wallet/scripts/session-demo.ts`) ran against
+  the final node with 38 checks, all as expected: the per-payment cap, a session key closing its own
+  session, a witness session refused without the witness's co-signature, modes A and P refusing key
+  changes, and a session opened and revoked inside Batches.
 - **On a real node.** The web app's live backend, driven from Node against the standalone node
   (`pnpm --filter web live-run`, which asserts every code), as recorded in the DEVLOG on 24 October:
 
@@ -403,8 +408,8 @@ disabled. Account page:
 
 ### The client, the web app and the devices
 
-- **759 TypeScript tests**: `@carbs/sessions` 132, Ledger's XRP signer kit 205 (106 of them
-  upstream's, unedited), `@carbs/ledger` 74, the web app 329, the passkey wallet 7, `scripts` 12.
+- **763 TypeScript tests**: `@carbs/sessions` 132, Ledger's XRP signer kit 205 (106 of them
+  upstream's, unedited), `@carbs/ledger` 74, the web app 333, the passkey wallet 7, `scripts` 12.
   CI runs the format check, the typecheck, these tests and a scan of the static build (no inline
   script, no third-party origin) on every pull request.
 - **The client and the device agree byte for byte.** `encodeForDevice` reproduces the session
@@ -424,14 +429,14 @@ disabled. Account page:
 
 ### What is real, what is simulated, what is not done
 
-|                               | Real                                                                                                                                         | Simulated, or not done                                                                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Node with the amendments**  | a standalone `xrpld` built from `rippled/`; every mode, refusal and the expiry checked against it                                            | not on a public network                                                                                                                                        |
-| **Ledger Stax, XRP app**      | the ML-DSA-44 root on the AlphaNet; the web app's Ledger account on the team's node; the policy refusal                                      | the Stax used for the demos runs the build before the seed fix (#120); the other device screens are emulator snapshots                                         |
-| **Ledger Stax, Security Key** | registration and assertions over CTAP2 (python-fido2), accepted by our node                                                                  | the browser ceremony with `alg: -48` (Chrome forwarding it to the Stax) is untested                                                                            |
-| **Mac account**               | the PRF vault's cryptography and the setup sequence, under tests                                                                             | PRF with a real Touch ID is unverified: a virtual authenticator and a software PRF double only                                                                 |
-| **Web app**                   | the Quantum screen against the real AlphaNet and mainnet; the live backend against the amendment node; the Ledger account on the team's node | on a public visit Session, Actions and Attack are SIMULATED; the wallet dialog's USB entry and the reuse of a set-up account ran against software doubles only |
-| **Not done**                  |                                                                                                                                              | a coverage-guided fuzzing run; an end-to-end test in CI (the rippled and device suites run by hand, recorded in the DEVLOG)                                    |
+|                               | Real                                                                                                                                                       | Simulated, or not done                                                                                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Node with the amendments**  | a standalone `xrpld` built from `rippled/`; every mode, refusal and the expiry checked against it                                                          | not on a public network                                                                                                                                        |
+| **Ledger Stax, XRP app**      | the ML-DSA-44 root on the AlphaNet; session reviews in modes C and P; the web app's Ledger account on the team's node, and a refusal by the owner's policy | the Stax used for the demos runs the build before the seed fix (#120); the other device screens are emulator snapshots                                         |
+| **Ledger Stax, Security Key** | registration and assertions over CTAP2 (python-fido2), accepted by our node                                                                                | the browser ceremony with `alg: -48` (Chrome forwarding it to the Stax) is untested                                                                            |
+| **Mac account**               | the PRF vault's cryptography and the setup sequence, under tests                                                                                           | PRF with a real Touch ID is unverified: a virtual authenticator and a software PRF double only                                                                 |
+| **Web app**                   | the Quantum screen against the real AlphaNet and mainnet; the live backend against the amendment node; the Ledger account on the team's node               | on a public visit Session, Actions and Attack are SIMULATED; the wallet dialog's USB entry and the reuse of a set-up account ran against software doubles only |
+| **Not done**                  |                                                                                                                                                            | a coverage-guided fuzzing run; an end-to-end test in CI (the rippled and device suites run by hand, recorded in the DEVLOG)                                    |
 
 ## What building it made visible
 
@@ -516,6 +521,7 @@ us the most:
 rippled/                XRPLF/rippled alphanet, imported unmodified, then the five amendments
   include/xrpl/tx/SigningSession.h      the session-signed predicate and the excluded types
   src/libxrpl/tx/transactors/session/   SigningSessionSet, SigningSessionDelete
+  src/libxrpl/tx/invariants/            ValidSigningSession, with the other invariants
   src/test/app/                         SigningSessions, PasskeyMLDSA, P256StrictDer, among the suites
 ledger-app/             LedgerHQ/app-xrp, imported unmodified, then clear signing, ML-DSA-44 and the session policy
   src/pq/               the post-quantum root, instructions 0x10 to 0x12
@@ -535,6 +541,7 @@ docs/
   device-contract.md    every APDU, status word and screen line between the client and the app
   ledger-dx-feedback.md the developer feedback deliverable
   DEVLOG.md             what was done, simulated, failed or not run, dated
+  adr/                  decision records
   base-failures.txt     the imported tree's own test failures, one assertion per line
 FIANSO-SPEC.md          the specification (Sofiane's), the reference for every decision
 UPSTREAM.md             what was imported, from where, at which commit, under which licence

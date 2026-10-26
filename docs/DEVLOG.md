@@ -926,6 +926,14 @@ Owner request: the web app follows the XRPL Commons look (an XRPL showcase app w
 - **Results:** cmocka in `ledger-app-builder-lite` + `libssl-dev`: test_pq_root 26/26, test_policy 23/23, test_printers, test_swap, test_tx unchanged. Ragger on Speculos, Stax only: the whole standalone suite, 144 passed, 41 skipped (the skips are the suite's own device conditions). Built for the Stax and the Nano S Plus with no new warning; Stax `bin/app.hex` sha256 `0bad479b266bc13a…`, application hash `03035f570409ec61…`.
 - **Not done:** nothing loaded on the Stax; the classical path keeps its upstream status page after a cancelled review (it still says "signed" there, `sign_transaction.c`); no Ragger run on the other four devices.
 
+## 2026-10-25: the hosted web app sets up a Ledger account on the team's node, with the real Stax
+
+- **What ran** (recorded after the fact from the owner's notes and device photos, around 14:40 ET): the hosted site (`carbs-kappa.vercel.app`, build of `1df4df7`), Node set to Team node, Account > Ledger account > Ledger Stax (USB, WebHID in Chrome), the owner's Stax running the XRP app **before the seed fix (#120)**. The device's account `r4MG66fUzV75ZHbSiEAXGHAxANrwQTnGh8` was funded by the team faucet, then `SetRegularKey` (`C27FAAC491…`), the ML-DSA-44 proof (`4EC5199E19…`) and `asfDisableMaster` (`56B4038B7C…`), each signed on the Stax and `tesSUCCESS`.
+- **The key is the zero-seed one:** with the pre-#120 build, the regular key is `rDX7hJiDtUVUnN2tjRqswtuZcbE88yi9i2`, the zero-seed key of the entry "the ML-DSA root key was the zero-seed key". So this run proves the web app's flow on the device, not a protected secret.
+- **The owner's policy refused a session on the device:** opening a session with no maximum per payment, the Stax showed its policy refusal, "No max per payment (limit XRP 5)" (the profile requires one of at most 5 XRP). The status word was not recorded.
+- **A second run failed** at `SetRegularKey` with `tefMASTER_DISABLED`, and the store left the other screens on "No account yet". This is the reuse defect fixed after the hackathon (next entry).
+- **Reset, made possible by the defect itself:** to run the flow again before the jury, the account was reset on the team's node by signing in software with the zero-seed ML-DSA-44 key, `AccountSet` ClearFlag 4 (`D3793583…3997`), then `SetRegularKey` with no key (`F8BEAF4E…4742`). Anyone could have done the same, which is why the fixed app derives the key from the device's SLIP-21 key. After the fixed app is loaded, a reset needs the device.
+
 ## 2026-10-25: after the hackathon: result, the maintained copy, and the demo remarks fixed
 
 - **Result:** carbs won the Ledger Protocol Innovation track ($4,000). The judged version is `STOOOKEEE/carbs` at the tag `submission` (`ce42905`); this copy, `gamween/carbs`, carries everything after it.
