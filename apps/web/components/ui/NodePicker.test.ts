@@ -44,15 +44,18 @@ afterEach(() => {
 });
 
 describe("Node picker", () => {
-  it("is one choice: Simulated, Local node, Team node, on the simulation by default", () => {
+  it("is one choice: Local node, Team node, Simulated, asked for on the first visit", () => {
     const { wrapper } = mountPicker();
-    expect(wrapper.findAll("option").map((o) => o.text())).toEqual([
-      "Simulated",
+    const options = wrapper.findAll("option");
+    expect(options.map((o) => o.text())).toEqual([
+      "Choose a node",
       "Local node",
       "Team node",
+      "Simulated",
     ]);
+    expect((options[0]?.element as HTMLOptionElement).disabled).toBe(true);
     const select = wrapper.get("[data-testid='node-select']").element as HTMLSelectElement;
-    expect(select.value).toBe("simulated");
+    expect(select.value).toBe("");
     expect(wrapper.find("[data-testid='node-target']").exists()).toBe(false);
     expect(wrapper.find("[data-testid='node-notice']").exists()).toBe(false);
     // No URL field and no Use button in the header.
@@ -60,11 +63,28 @@ describe("Node picker", () => {
     expect(wrapper.text()).not.toContain("Use");
   });
 
+  it("keeps the simulation when it is picked on the first visit: saved, shown, no reload", async () => {
+    const { wrapper, dialog, reload } = mountPicker();
+    await pick(wrapper, "simulated");
+    const select = wrapper.get("[data-testid='node-select']").element as HTMLSelectElement;
+    expect(select.value).toBe("simulated");
+    expect(localStorage.getItem("carbs-node")).toBe("simulated");
+    expect(dialog().exists()).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("shows the simulation once it was chosen in this browser", () => {
+    localStorage.setItem("carbs-node", "simulated");
+    const { wrapper } = mountPicker();
+    const select = wrapper.get("[data-testid='node-select']").element as HTMLSelectElement;
+    expect(select.value).toBe("simulated");
+  });
+
   it("opens the Local node dialog with the command and the URLs, and keeps the simulation meanwhile", async () => {
     const { wrapper, dialog, reload } = mountPicker();
     await pick(wrapper, "local");
     const select = wrapper.get("[data-testid='node-select']").element as HTMLSelectElement;
-    expect(select.value).toBe("simulated");
+    expect(select.value).toBe("");
     expect(dialog().exists()).toBe(true);
     expect(dialog().get("[data-testid='node-command']").text()).toContain(
       "GENESIS_SEED=… pnpm demo --no-web",

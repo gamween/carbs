@@ -1,8 +1,8 @@
 /**
  * The one choice of the header: which node the Account, Session, Actions and Attack screens
- * run on. The simulation is the default; the local node runs on the person's machine
- * (`pnpm demo`), the team node on the team's server. The Quantum screen reads the public
- * networks and does not follow this choice.
+ * run on. The simulation is the default until a node is chosen; the local node runs on the
+ * person's machine (`pnpm demo`), the team node on the team's server. The Quantum screen reads
+ * the public networks and does not follow this choice.
  */
 export type NodeChoice = "simulated" | "local" | "team";
 
@@ -10,9 +10,9 @@ export type NodeChoice = "simulated" | "local" | "team";
 export type LiveNodeChoice = Exclude<NodeChoice, "simulated">;
 
 export const NODE_CHOICES: readonly { id: NodeChoice; label: string }[] = [
-  { id: "simulated", label: "Simulated" },
   { id: "local", label: "Local node" },
   { id: "team", label: "Team node" },
+  { id: "simulated", label: "Simulated" },
 ];
 
 export const NODE_STORAGE_KEY = "carbs-node";
@@ -41,15 +41,20 @@ export function defaultNodeChoice(fallback: unknown): NodeChoice {
   return isNodeChoice(fallback) ? fallback : "simulated";
 }
 
-/** The saved choice, else the build's default, else the simulation. */
-export function readNodeChoice(storage: ChoiceStorage | null, fallback: unknown): NodeChoice {
+/** The choice saved in this browser, or null if none was made (or storage is blocked). */
+export function readSavedNodeChoice(storage: ChoiceStorage | null): NodeChoice | null {
   try {
     const saved = storage?.getItem(NODE_STORAGE_KEY);
     if (isNodeChoice(saved)) return saved;
   } catch {
-    // Storage can be blocked: the default applies.
+    // Storage can be blocked: nothing is saved.
   }
-  return defaultNodeChoice(fallback);
+  return null;
+}
+
+/** The saved choice, else the build's default, else the simulation. */
+export function readNodeChoice(storage: ChoiceStorage | null, fallback: unknown): NodeChoice {
+  return readSavedNodeChoice(storage) ?? defaultNodeChoice(fallback);
 }
 
 export function saveNodeChoice(storage: ChoiceStorage | null, choice: NodeChoice): void {

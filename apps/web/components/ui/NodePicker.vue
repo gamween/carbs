@@ -6,6 +6,7 @@ import {
   NODE_CHOICES,
   isLiveChoice,
   isNodeChoice,
+  readSavedNodeChoice,
   saveNodeChoice,
   type LiveNodeChoice,
 } from "~/lib/node-choice";
@@ -47,6 +48,15 @@ onMounted(() => {
 });
 onBeforeUnmount(() => clearTimeout(noticeTimer));
 
+// On the first visit the select asks for a node instead of showing the simulation it runs on
+// meanwhile (the SIMULATED badge says so). After a refused live node it shows the simulation.
+const chosen = ref(
+  isLiveChoice(status.active) ||
+    status.requested !== status.active ||
+    readSavedNodeChoice(globalThis.localStorage ?? null) !== null,
+);
+const shown = computed(() => (chosen.value ? status.active : ""));
+
 const activeUrl = computed(() =>
   isLiveChoice(status.active) ? network.nodeNetwork(status.active).wss : null,
 );
@@ -56,8 +66,17 @@ function choose(event: Event): void {
   if (!(target instanceof HTMLSelectElement)) return;
   const value = target.value;
   // The select shows the node in effect until the new one is reached.
-  target.value = status.active;
-  if (!isNodeChoice(value) || value === status.active) return;
+  target.value = shown.value;
+  if (!isNodeChoice(value)) return;
+  if (value === status.active) {
+    // The simulation picked on the first visit: already running, nothing to reload.
+    if (!chosen.value) {
+      saveNodeChoice(globalThis.localStorage ?? null, value);
+      chosen.value = true;
+      target.value = value;
+    }
+    return;
+  }
   if (isLiveChoice(value)) {
     dialog.value = value;
     return;
@@ -89,11 +108,12 @@ async function closeDialog(): Promise<void> {
         <select
           ref="select"
           class="input !min-h-8 !w-auto"
-          :value="status.active"
+          :value="shown"
           aria-label="Node"
           data-testid="node-select"
           @change="choose"
         >
+          <option value="" disabled>Choose a node</option>
           <option v-for="option in NODE_CHOICES" :key="option.id" :value="option.id">
             {{ option.label }}
           </option>
