@@ -145,7 +145,8 @@ const thumbRef = ref<HTMLElement | null>(null);
 const itemRefs: (HTMLElement | null)[] = [];
 let slots: Slot[] = [];
 let box: DOMRect | null = null;
-let committed = Math.max(0, index.value);
+// -1 too on the landing page: tapping any slot, the first included, then selects it.
+let committed = index.value;
 let handoff: ReturnType<typeof setTimeout> | undefined;
 let drag: DragState | null = null;
 let gen = 0;
@@ -397,7 +398,10 @@ function onKeyDown(e: KeyboardEvent): void {
 }
 
 watch(index, (value, before) => {
-  if (value < 0) return;
+  if (value < 0) {
+    committed = -1;
+    return;
+  }
   if (before < 0) {
     committed = value;
     jumpTo(value);

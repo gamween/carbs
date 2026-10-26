@@ -35,6 +35,21 @@ describe("Rubber segment", () => {
     wrapper.unmount();
   });
 
+  it("emits the first slot when it is tapped from the landing page", () => {
+    const wrapper = mount(RubberSegment, { props: { items: ITEMS, modelValue: "" } });
+    tap(wrapper, "segment-account");
+    expect(wrapper.emitted("change")).toEqual([["account", 0]]);
+    wrapper.unmount();
+  });
+
+  it("emits a slot again after the landing page cleared it", async () => {
+    const wrapper = mount(RubberSegment, { props: { items: ITEMS, modelValue: "session" } });
+    await wrapper.setProps({ modelValue: "" });
+    tap(wrapper, "segment-session");
+    expect(wrapper.emitted("change")).toEqual([["session", 1]]);
+    wrapper.unmount();
+  });
+
   it("emits the new value when another slot is tapped", () => {
     const wrapper = mount(RubberSegment, { props: { items: ITEMS, modelValue: "account" } });
     tap(wrapper, "segment-actions");

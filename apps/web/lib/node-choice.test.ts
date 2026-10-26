@@ -4,6 +4,7 @@ import {
   NODE_STORAGE_KEY,
   clearNodeChoice,
   readNodeChoice,
+  readSavedNodeChoice,
   saveNodeChoice,
   type ChoiceStorage,
 } from "./node-choice";
@@ -23,8 +24,15 @@ function memory(initial: Record<string, string> = {}) {
 }
 
 describe("node choice", () => {
-  it("offers three nodes, the simulation first", () => {
-    expect(NODE_CHOICES.map((c) => c.label)).toEqual(["Simulated", "Local node", "Team node"]);
+  it("offers three nodes, the simulation last", () => {
+    expect(NODE_CHOICES.map((c) => c.label)).toEqual(["Local node", "Team node", "Simulated"]);
+  });
+
+  it("tells whether a node was chosen in this browser", () => {
+    expect(readSavedNodeChoice(memory())).toBeNull();
+    expect(readSavedNodeChoice(null)).toBeNull();
+    expect(readSavedNodeChoice(memory({ [NODE_STORAGE_KEY]: "live" }))).toBeNull();
+    expect(readSavedNodeChoice(memory({ [NODE_STORAGE_KEY]: "simulated" }))).toBe("simulated");
   });
 
   it("defaults to the simulation", () => {
