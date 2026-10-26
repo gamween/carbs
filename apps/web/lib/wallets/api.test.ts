@@ -5,9 +5,9 @@ import { createAppContext } from "../app-context";
 import type { Backend } from "../ports";
 import { createWalletAdapters, walletNetwork } from "./adapters";
 import { STAX_NEEDS_LIVE_NODE, createWalletsApi } from "./api";
-import { browserPasskeySource, softwarePasskeySource } from "./passkey";
+import { browserPrfSource, softwarePrfSource } from "./prf";
 
-function wired(passkeys = softwarePasskeySource()) {
+function wired(passkeys = softwarePrfSource()) {
   const ctx = createAppContext();
   ctx.sim.simDevice.setApprover(async () => true);
   const adapters = createWalletAdapters(
@@ -42,12 +42,22 @@ describe("wallets API on the Vue binding", () => {
     expect(ctx.demo.state.address).toBeNull();
   });
 
-  it("says why the passkey is unavailable where the browser has no WebAuthn", async () => {
-    const { api } = wired(browserPasskeySource());
+  it("says why the Mac account is unavailable on a live node where the browser has no WebAuthn", async () => {
+    const ctx = createAppContext();
+    const live: Backend = { ...ctx.backend, mode: "live" };
+    const adapters = createWalletAdapters(
+      { backend: live, demo: ctx.demo, network: ctx.network, device: ctx.deviceSelection },
+      browserPrfSource(),
+    );
+    const manager = {
+      connect: async () => ({ address: "", network: walletNetwork(ctx) }),
+      disconnect: async () => undefined,
+    };
+    const api = createWalletsApi(manager, adapters, live, false);
     await api.refresh();
-    const passkey = api.state.entries.find((e) => e.description.id === "passkey-mac");
-    expect(passkey?.available).toBe(false);
-    expect(passkey?.unavailableReason).toContain("secure context");
+    const mac = api.state.entries.find((e) => e.description.id === "mac-touch-id");
+    expect(mac?.available).toBe(false);
+    expect(mac?.unavailableReason).toContain("PRF extension");
   });
 
   it("keeps the error when a connection fails", async () => {
@@ -65,7 +75,7 @@ describe("the SIMULATED badge of the two Ledger Stax entries", () => {
     const live: Backend = { ...ctx.backend, mode: "live" };
     const adapters = createWalletAdapters(
       { backend: live, demo: ctx.demo, network: ctx.network, device: ctx.deviceSelection },
-      softwarePasskeySource(),
+      softwarePrfSource(),
     );
     const manager = {
       connect: async () => ({ address: "", network: walletNetwork(ctx) }),
@@ -95,7 +105,7 @@ describe("the SIMULATED badge of the two Ledger Stax entries", () => {
     const live: Backend = { ...ctx.backend, mode: "live" };
     const adapters = createWalletAdapters(
       { backend: live, demo: ctx.demo, network: ctx.network, device: ctx.deviceSelection },
-      softwarePasskeySource(),
+      softwarePrfSource(),
     );
     const manager = {
       connect: async () => ({ address: "", network: walletNetwork(ctx) }),

@@ -1,28 +1,18 @@
-import { SoftwareAuthenticator } from "@carbs/sessions";
+import { SoftwarePrfOracle, browserPrfOracle } from "@carbs/sessions";
 import { describe, expect, it } from "vitest";
 import { createSimBackend } from "./backend";
-import { createDemo, OTHER_DEVICE_MESSAGE } from "./demo";
+import { createDemo, OTHER_DEVICE_MESSAGE, VAULT_NOT_KEPT_MESSAGE } from "./demo";
 import { createLiveBackend } from "./live/backend";
 import { FakeAlphaNet } from "./live/fake-alphanet";
 import { NETWORKS } from "./networks";
 import type { ChoiceStorage } from "./node-choice";
+import { memoryStorage } from "./testing/memory-storage";
 import type { Backend, DevicePort, ExposurePort, TxJson } from "./ports";
-import { parseSavedProfile, profileStorageKey } from "./saved-profile";
-import type { PasskeySource } from "./wallets/adapters";
+import { parseSavedProfile, profileStorageKey, vaultStorageKey } from "./saved-profile";
+import type { PrfSource } from "./wallets/prf";
 
 const NODE = "wss://node.example.org";
 const PROFILE_STORAGE_KEY = profileStorageKey(NODE);
-
-/** A Map behind the storage surface of the browser. */
-function memoryStorage(): ChoiceStorage & { map: Map<string, string> } {
-  const map = new Map<string, string>();
-  return {
-    map,
-    getItem: (key) => map.get(key) ?? null,
-    setItem: (key, value) => void map.set(key, value),
-    removeItem: (key) => void map.delete(key),
-  };
-}
 
 /**
  * The simulated Stax, behaving as a real one does on the points that matter here: it is not
@@ -39,8 +29,12 @@ function staxLike(device: DevicePort): DevicePort {
   };
 }
 
-/** A simulated node and a Stax-like device, with every submission counted. */
-function rig() {
+/**
+ * A simulated node and a Stax-like device, with every submission counted. `asLive` makes the
+ * store treat the node as a live one, as it does on the local or team node, which is what
+ * keeps an account across reloads.
+ */
+function rig(asLive = false) {
   const sim = createSimBackend();
   sim.simDevice.setApprover(async () => true);
   const submitted: TxJson[] = [];
@@ -50,7 +44,11 @@ function rig() {
     submitted.push(tx);
     return submit(tx);
   };
-  const backend: Backend = { ...sim, device: staxLike(sim.simDevice) };
+  const backend: Backend = {
+    ...sim,
+    mode: asLive ? "live" : "simulated",
+    device: staxLike(sim.simDevice),
+  };
   return { sim, backend, submitted };
 }
 
@@ -142,7 +140,7 @@ describe("a Ledger account is the device's own", () => {
 
 describe("the account across a page reload", () => {
   it("keeps the address and public key of a real Stax's account, and nothing that signs", async () => {
-    const { backend } = rig();
+    const { backend } = rig(true);
     const storage = memoryStorage();
     const demo = createDemo(backend, { storage, nodeKey: NODE });
     expect(await demo.createAccount("ledger")).toBe(true);
@@ -157,7 +155,7 @@ describe("the account across a page reload", () => {
     });
     // Only these fields; no seed, private key or session key.
     expect(Object.keys(JSON.parse(text)).sort()).toEqual(
-      ["address", "authority", "device", "node", "passkeyOnly", "profile", "version"].sort(),
+      ["address", "authority", "device", "node", "profile", "vault", "version"].sort(),
     );
     expect(Object.keys(JSON.parse(text).authority).sort()).toEqual([
       "address",
@@ -168,7 +166,7 @@ describe("the account across a page reload", () => {
   });
 
   it("finds the account again after a reload, ready to open a session", async () => {
-    const { backend, submitted } = rig();
+    const { backend, submitted } = rig(true);
     const storage = memoryStorage();
     const before = createDemo(backend, { storage, nodeKey: NODE });
     await before.createAccount("ledger");
@@ -193,7 +191,7 @@ describe("the account across a page reload", () => {
   });
 
   it("refuses to sign with a Stax that holds other keys", async () => {
-    const { sim, backend, submitted } = rig();
+    const { sim, backend, submitted } = rig(true);
     const storage = memoryStorage();
     await createDemo(backend, { storage, nodeKey: NODE }).createAccount("ledger");
     const after = createDemo(backend, { storage, nodeKey: NODE });
@@ -213,7 +211,7 @@ describe("the account across a page reload", () => {
   });
 
   it("keeps one account per node, and forgets one the node no longer agrees with", async () => {
-    const { backend } = rig();
+    const { backend } = rig(true);
     const storage = memoryStorage();
     await createDemo(backend, { storage, nodeKey: NODE }).createAccount("ledger");
     const elsewhere = createDemo(backend, { storage, nodeKey: "ws://localhost:6006" });
@@ -229,7 +227,7 @@ describe("the account across a page reload", () => {
     expect(await elsewhere.restore()).toBeNull();
 
     // A new ledger (the node restarted): the account is not there.
-    const fresh = rig().backend;
+    const fresh = rig(true).backend;
     const gone = createDemo(fresh, { storage, nodeKey: NODE });
     expect(await gone.restore()).toBeNull();
     expect(gone.state.error).toContain("not restored");
@@ -237,7 +235,7 @@ describe("the account across a page reload", () => {
   });
 
   it("keeps the profile when the node does not answer, to try at the next load", async () => {
-    const { backend } = rig();
+    const { backend } = rig(true);
     const storage = memoryStorage();
     await createDemo(backend, { storage, nodeKey: NODE }).createAccount("ledger");
     const down: Backend = {
@@ -269,7 +267,7 @@ describe("the account across a page reload", () => {
   });
 
   it("forgets the saved account on disconnect and when a new setup starts", async () => {
-    const { backend } = rig();
+    const { backend } = rig(true);
     const storage = memoryStorage();
     const demo = createDemo(backend, { storage, nodeKey: NODE });
     await demo.createAccount("ledger");
@@ -281,7 +279,7 @@ describe("the account across a page reload", () => {
   });
 
   it("works with storage the browser blocks: the account then lasts for the page", async () => {
-    const { backend } = rig();
+    const { backend } = rig(true);
     const blocked: ChoiceStorage = {
       getItem: () => {
         throw new Error("SecurityError");
@@ -299,7 +297,7 @@ describe("the account across a page reload", () => {
   });
 });
 
-describe("a passkey account across a reload (live backend, test double node)", () => {
+describe("the post-quantum Mac account (PRF vault)", () => {
   const noExposure: ExposurePort = {
     mode: "live",
     async check() {
@@ -307,39 +305,66 @@ describe("a passkey account across a reload (live backend, test double node)", (
     },
   };
 
-  /** One software authenticator that outlives the "page", as the browser's platform one does. */
-  function lastingPasskeys(): PasskeySource {
-    const rpId = "carbs.invalid";
-    const authenticator = new SoftwareAuthenticator(`https://${rpId}`);
-    return {
-      simulated: true,
-      available: () => true,
-      create: async () => {
-        throw new Error("not used on the live backend");
-      },
-      material: async () => ({ credential: authenticator.credential, authenticator, rpId }),
-      restore: (credential) => ({ credential, authenticator, rpId }),
-    };
+  /** One software PRF oracle that outlives the "page", as the browser's passkey does. */
+  function lastingPrf(): PrfSource {
+    return { simulated: true, available: () => true, oracle: new SoftwarePrfOracle() };
   }
 
-  it("signs with the same passkey after the reload, by its credential id", async () => {
+  async function liveBackend(prf: PrfSource = lastingPrf()) {
     const fake = new FakeAlphaNet({ sessions: true });
     const backend = await createLiveBackend({
       client: fake,
       network: () => ({ ...NETWORKS.local, faucet: "http://localhost:3005/accounts" }),
       approver: () => async () => true,
-      passkeys: lastingPasskeys(),
+      prf,
       exposure: noExposure,
       fetcher: fake.faucet,
       sleep: async () => undefined,
     });
+    return { fake, backend };
+  }
+
+  it("sets up on the simulation: SetRegularKey to the ML-DSA-44 key, its proof, then asfDisableMaster", async () => {
+    const { backend, submitted } = rig();
+    const demo = createDemo(backend);
+    expect(await demo.createAccount("mac")).toBe(true);
+    expect(submitted.map((tx) => tx.TransactionType)).toEqual([
+      "SetRegularKey",
+      "AccountSet",
+      "AccountSet",
+    ]);
+    const [regularKey, proof, disable] = submitted;
+    const mlDsa = demo.accountSignerAddress();
+    expect(regularKey?.["RegularKey"]).toBe(mlDsa);
+    // The proof is signed by the ML-DSA-44 key (1 312 bytes), the other two by the master key.
+    expect(String(proof?.SigningPubKey)).toHaveLength(2624);
+    expect(String(regularKey?.SigningPubKey)).toBe(String(disable?.SigningPubKey));
+    expect(demo.state.info?.masterDisabled).toBe(true);
+    expect(demo.state.info?.regularKey).toBe(mlDsa);
+    expect(demo.state.objects?.passkeys).toEqual([]);
+    expect(submitted.some((tx) => tx.TransactionType === "PasskeyListSet")).toBe(false);
+    expect(submitted.some((tx) => "PasskeySignature" in tx)).toBe(false);
+    expect(demo.state.steps[0]?.label).toContain("SIMULATED: software PRF, no Touch ID");
+    // Its sessions are ML-DSA-44 too.
+    await demo.openSession({ mode: "P", durationSec: 60, permissions: ["Payment"], capDrops: 0 });
+    expect(demo.state.sessionKey?.algorithm).toBe("mldsa44");
+  });
+
+  it("signs with real ML-DSA-44 on a live node, keeps the sealed vault, and finds it after a reload", async () => {
+    const { fake, backend } = await liveBackend();
     const storage = memoryStorage();
     const before = createDemo(backend, { storage, nodeKey: NODE });
     expect(await before.createAccount("mac")).toBe(true);
+    const address = before.state.address ?? "";
+    const onLedger = fake.accounts.get(address);
+    expect(onLedger?.masterDisabled).toBe(true);
+    expect(onLedger?.passkeys).toEqual([]);
     const saved = parseSavedProfile(storage.map.get(PROFILE_STORAGE_KEY) ?? null);
     expect(saved?.profile).toBe("mac");
-    expect(saved?.authority.algorithm).toBe("p256");
-    expect(saved?.authority.credentialId).toMatch(/^[0-9A-F]+$/i);
+    expect(saved?.vault?.account).toBe(address);
+    expect(saved?.vault?.mlDsaAddress).toBe(onLedger?.regularKey);
+    // The seed is only there sealed, and also kept under the account's own key.
+    expect(storage.map.get(vaultStorageKey(address))).toBe(JSON.stringify(saved?.vault));
 
     const after = createDemo(backend, { storage, nodeKey: NODE });
     expect(await after.restore()).not.toBeNull();
@@ -351,25 +376,78 @@ describe("a passkey account across a reload (live backend, test double node)", (
       capDrops: 0,
     });
     expect(opened?.code).toBe("tesSUCCESS");
-    const last = fake.accounts.get(after.state.address ?? "")?.history.at(-1);
+    const last = fake.accounts.get(address)?.history.at(-1);
     expect(last?.tx.TransactionType).toBe("SigningSessionSet");
-    expect(last?.tx["PasskeySignature"]).toBeDefined();
+    expect(String(last?.tx.SigningPubKey)).toHaveLength(2624);
+    expect(last?.tx["PasskeySignature"]).toBeUndefined();
+  });
+
+  it("does not open a vault moved to another account (the address is the associated data)", async () => {
+    const { backend } = await liveBackend();
+    const storage = memoryStorage();
+    const demo = createDemo(backend, { storage, nodeKey: NODE });
+    await demo.createAccount("mac");
+    const saved = parseSavedProfile(storage.map.get(PROFILE_STORAGE_KEY) ?? null);
+    if (saved?.vault == null) throw new Error("no vault");
+    const moved = { ...saved.vault, account: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh" };
+    const key = backend.wallet.openVaultKey(moved);
+    await expect(
+      key.sign({ TransactionType: "AccountSet", Account: moved.account, Fee: "10", Sequence: 1 }),
+    ).rejects.toThrow(/does not open/);
+    // A profile whose vault names another account is not even read back.
+    storage.map.set(PROFILE_STORAGE_KEY, JSON.stringify({ ...saved, vault: moved }));
+    expect(await createDemo(backend, { storage, nodeKey: NODE }).restore()).toBeNull();
+  });
+
+  it("leaves the master key enabled when the browser cannot keep the sealed key", async () => {
+    const { fake, backend } = await liveBackend();
+    const demo = createDemo(backend, { storage: null, nodeKey: NODE });
+    expect(await demo.createAccount("mac")).toBe(false);
+    expect(demo.state.error).toBe(VAULT_NOT_KEPT_MESSAGE);
+    const onLedger = fake.accounts.get(demo.state.address ?? "");
+    // Handed to the ML-DSA-44 key and proven, but the master key still works.
+    expect(onLedger?.regularKey).toMatch(/^r/);
+    expect(onLedger?.masterDisabled).toBe(false);
+  });
+
+  it("says clearly that the browser or the authenticator has no PRF, and sends nothing", async () => {
+    const container: CredentialsContainer = {
+      create: async () => ({
+        id: "AQID",
+        type: "public-key",
+        rawId: new Uint8Array([1, 2, 3]).buffer,
+        getClientExtensionResults: () => ({}),
+      }),
+      get: async () => null,
+      preventSilentAccess: async () => undefined,
+      store: async () => undefined,
+    };
+    const noPrf: PrfSource = {
+      simulated: false,
+      available: () => true,
+      oracle: browserPrfOracle(container, { rpId: "localhost", rpName: "carbs" }),
+    };
+    const { fake, backend } = await liveBackend(noPrf);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: NODE });
+    expect(await demo.createAccount("mac")).toBe(false);
+    expect(demo.state.error).toContain("does not enable the PRF extension");
+    expect(fake.requests).not.toContain("submit");
   });
 });
 
 describe("the saved profile as read back", () => {
   const valid = {
-    version: 1,
+    version: 2,
     node: NODE,
     profile: "ledger",
     address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
-    passkeyOnly: false,
     device: "usb",
     authority: {
       algorithm: "mldsa44",
       publicKey: "ABCD",
       address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
     },
+    vault: null,
   };
 
   it("takes only the fields it knows, so nothing else is ever used", () => {
@@ -380,7 +458,11 @@ describe("the saved profile as read back", () => {
   it("refuses anything malformed", () => {
     expect(parseSavedProfile(null)).toBeNull();
     expect(parseSavedProfile("{")).toBeNull();
-    expect(parseSavedProfile(JSON.stringify({ ...valid, version: 2 }))).toBeNull();
+    expect(parseSavedProfile(JSON.stringify({ ...valid, version: 1 }))).toBeNull();
+    // A Mac account without its vault is useless: refused.
+    expect(
+      parseSavedProfile(JSON.stringify({ ...valid, profile: "mac", device: null })),
+    ).toBeNull();
     expect(parseSavedProfile(JSON.stringify({ ...valid, profile: "demo" }))).toBeNull();
     expect(parseSavedProfile(JSON.stringify({ ...valid, address: "not an address" }))).toBeNull();
     expect(

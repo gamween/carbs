@@ -16,12 +16,12 @@ describe("Wallet entry", () => {
       .findAll("[data-testid^='wallet-']")
       .map((n) => n.attributes("data-testid"))
       .filter((id) =>
-        /^wallet-(ledger-stax-usb|ledger-stax-simulated|passkey-mac|demo-account)$/.test(id ?? ""),
+        /^wallet-(ledger-stax-usb|ledger-stax-simulated|mac-touch-id|demo-account)$/.test(id ?? ""),
       );
     expect(ids).toEqual([
       "wallet-ledger-stax-usb",
       "wallet-ledger-stax-simulated",
-      "wallet-passkey-mac",
+      "wallet-mac-touch-id",
       "wallet-demo-account",
     ]);
     const text = wrapper.text();
@@ -30,7 +30,7 @@ describe("Wallet entry", () => {
 
   it("shows, for each, the key type, who signs what and the SIMULATED badge", async () => {
     const { wrapper } = await opened();
-    for (const id of ["ledger-stax-simulated", "passkey-mac", "demo-account"]) {
+    for (const id of ["ledger-stax-simulated", "mac-touch-id", "demo-account"]) {
       const card = wrapper.get(`[data-testid='wallet-${id}']`);
       expect(card.get("[data-testid='key-type']").text().length).toBeGreaterThan(10);
       expect(card.findAll("[data-testid='signs'] li").length).toBeGreaterThanOrEqual(2);
@@ -45,8 +45,15 @@ describe("Wallet entry", () => {
       wrapper.get("[data-testid='wallet-ledger-stax-simulated'] [data-testid='key-type']").text(),
     ).toContain("ML-DSA-44");
     expect(
-      wrapper.get("[data-testid='wallet-passkey-mac'] [data-testid='key-type']").text(),
-    ).toContain("P-256");
+      wrapper.get("[data-testid='wallet-mac-touch-id'] [data-testid='key-type']").text(),
+    ).toContain("ML-DSA-44");
+    const mac = wrapper.get("[data-testid='wallet-mac-touch-id']").text();
+    expect(mac).not.toContain("P-256");
+    expect(mac).toContain("cannot create an ML-DSA-44 passkey");
+    expect(mac).toContain("has not been verified yet");
+    expect(
+      wrapper.get("[data-testid='wallet-mac-touch-id'] [data-testid='simulated-parts']").text(),
+    ).toBe("node, Touch ID (software PRF)");
   });
 
   it("connects the demo account, closes, shows the address and disconnects", async () => {
@@ -71,14 +78,14 @@ describe("Wallet entry", () => {
     expect(usb.get("[data-testid='connect-ledger-stax-usb']").attributes("disabled")).toBeDefined();
   });
 
-  it("connects the simulated Ledger Stax and the passkey through the software authenticator", async () => {
+  it("connects the simulated Ledger Stax and the Mac account through the software PRF double", async () => {
     const stax = await opened();
     await stax.wrapper.get("[data-testid='connect-ledger-stax-simulated']").trigger("click");
     await flushPromises();
     expect(stax.ctx.demo.state.profile).toBe("ledger");
 
     const passkey = await opened();
-    await passkey.wrapper.get("[data-testid='connect-passkey-mac']").trigger("click");
+    await passkey.wrapper.get("[data-testid='connect-mac-touch-id']").trigger("click");
     await flushPromises();
     expect(passkey.ctx.demo.state.profile).toBe("mac");
   });

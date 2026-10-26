@@ -5,17 +5,17 @@ import { describe, expect, it } from "vitest";
 import { createAppContext } from "../app-context";
 import { DeviceRejectedError, type Backend } from "../ports";
 import { accountIdOf } from "../sim/keys";
-import { verifyPasskeyAssertion } from "../sim/webauthn";
 import { createWalletAdapters, walletNetwork } from "./adapters";
 import { WALLET_DESCRIPTIONS } from "./catalog";
-import { softwarePasskeySource } from "./passkey";
+import { softwarePrfSource } from "./prf";
+import { memoryStorage } from "../testing/memory-storage";
 
 function rig() {
   const ctx = createAppContext();
   ctx.sim.simDevice.setApprover(async () => true);
   const adapters = createWalletAdapters(
     { backend: ctx.backend, demo: ctx.demo, network: ctx.network, device: ctx.deviceSelection },
-    softwarePasskeySource(),
+    softwarePrfSource(),
   );
   const manager = new WalletManager({ adapters, autoConnect: false, logger: { level: "error" } });
   return { ctx, adapters, manager };
@@ -32,15 +32,15 @@ function payment(account: string, drops = "2000000") {
   } as const;
 }
 
-const IDS = ["ledger-stax-usb", "ledger-stax-simulated", "passkey-mac", "demo-account"];
+const IDS = ["ledger-stax-usb", "ledger-stax-simulated", "mac-touch-id", "demo-account"];
 
 describe("the four adapters", () => {
-  it("are exactly the real Ledger Stax, its simulated double, Passkey (this Mac) and Demo account", () => {
+  it("are exactly the real Ledger Stax, its simulated double, the Mac account and Demo account", () => {
     const { adapters } = rig();
     expect(adapters.map((a) => a.name)).toEqual([
       "Ledger Stax (USB)",
       "Ledger Stax (simulated)",
-      "Passkey (this Mac)",
+      "Mac account (Touch ID)",
       "Demo account",
     ]);
     expect(adapters.map((a) => a.id)).toEqual(IDS);
@@ -106,40 +106,24 @@ describe("the network a wallet reports", () => {
   });
 });
 
-describe("Passkey (this Mac)", () => {
-  it("registers the passkey and signs with a real WebAuthn assertion", async () => {
+describe("Mac account (Touch ID)", () => {
+  it("hands the account to a sealed ML-DSA-44 key, disables the master key, puts no passkey on the ledger", async () => {
     const { manager, ctx } = rig();
-    const account = await manager.connect("passkey-mac");
+    const account = await manager.connect("mac-touch-id");
     expect(ctx.demo.state.profile).toBe("mac");
-    expect(ctx.demo.state.objects?.passkeys).toHaveLength(1);
-    expect(account.publicKey).toBe(ctx.demo.state.objects?.passkeys[0]);
-
-    const signed = await ctx.demo.signAsAccount(
-      await ctx.demo.prepare({ ...payment(account.address), Fee: "12" }),
-    );
-    expect(signed["PasskeySignature"]).toBeDefined();
-    expect(verifyPasskeyAssertion(signed)).toBe(true);
-
+    expect(ctx.demo.state.info?.masterDisabled).toBe(true);
+    expect(ctx.demo.state.info?.regularKey).toBe(ctx.demo.accountSignerAddress());
+    expect(ctx.demo.state.objects?.passkeys).toHaveLength(0);
+    // An ML-DSA-44 key: 1 312 bytes, as hex.
+    expect(account.publicKey?.length).toBe(2624);
     const result = await manager.signAndSubmit(payment(account.address) as never);
     expect(result["engine_result"]).toBe("tesSUCCESS");
+    expect(result["tx"]).not.toHaveProperty("PasskeySignature");
   });
 
-  it("is refused by the node when the assertion is tampered with", async () => {
+  it("opens a session with the vault key and the ML-DSA-44 session key signs with no prompt", async () => {
     const { manager, ctx } = rig();
-    const account = await manager.connect("passkey-mac");
-    const signed = await ctx.demo.signAsAccount(
-      await ctx.demo.prepare({ ...payment(account.address), Fee: "12" }),
-    );
-    expect(verifyPasskeyAssertion({ ...signed, Amount: "9000000" })).toBe(false);
-    const result = await ctx.backend.node.submit({ ...signed, Amount: "9000000" });
-    expect(result.code).toBe("temBAD_SIGNATURE");
-    const wrongChallenge = { ...signed, LastLedgerSequence: Number(signed.LastLedgerSequence) + 1 };
-    expect(verifyPasskeyAssertion(wrongChallenge)).toBe(false);
-  });
-
-  it("opens a session by passkey and the session key signs with no prompt", async () => {
-    const { manager, ctx } = rig();
-    await manager.connect("passkey-mac");
+    await manager.connect("mac-touch-id");
     const opened = await ctx.demo.openSession({
       mode: "A",
       durationSec: 600,
@@ -147,6 +131,7 @@ describe("Passkey (this Mac)", () => {
       capDrops: 0,
     });
     expect(opened?.code).toBe("tesSUCCESS");
+    expect(ctx.demo.state.sessionKey?.algorithm).toBe("mldsa44");
     const action = await ctx.demo.runAction("payment");
     expect(action?.result.code).toBe("tesSUCCESS");
   });
@@ -181,6 +166,24 @@ describe("Ledger Stax (USB)", () => {
     const { adapters } = rig();
     const usb = adapters.find((a) => a.id === "ledger-stax-usb");
     expect(await usb?.isAvailable()).toBe(false);
+  });
+
+  it("offers the simulated Stax everywhere, the real one only on a live node with WebHID", async () => {
+    const ctx = createAppContext();
+    const host = { demo: ctx.demo, network: ctx.network, device: ctx.deviceSelection };
+    const live = createWalletAdapters(
+      { ...host, backend: { ...ctx.backend, mode: "live" } },
+      softwarePrfSource(),
+    );
+    const byId = (id: string) => live.find((a) => a.id === id);
+    Object.defineProperty(navigator, "hid", { value: {}, configurable: true });
+    try {
+      expect(await byId("ledger-stax-usb")?.isAvailable()).toBe(true);
+    } finally {
+      Reflect.deleteProperty(navigator, "hid");
+    }
+    expect(await byId("ledger-stax-usb")?.isAvailable()).toBe(false);
+    expect(await byId("ledger-stax-simulated")?.isAvailable()).toBe(true);
   });
 });
 
@@ -247,7 +250,7 @@ describe("the adapters on the live backend (node double)", () => {
       client: fake,
       network: () => ({ ...NETWORKS.local, faucet: "http://localhost:3005/accounts" }),
       approver: () => async () => true,
-      passkeys: softwarePasskeySource(),
+      prf: softwarePrfSource(),
       exposure: {
         mode: "live",
         async check() {
@@ -257,10 +260,10 @@ describe("the adapters on the live backend (node double)", () => {
       fetcher: fake.faucet,
       sleep: async () => undefined,
     });
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     const adapters = createWalletAdapters(
       { backend, demo, network: ctx.network, device },
-      softwarePasskeySource(),
+      softwarePrfSource(),
     );
     const manager = new WalletManager({ adapters, autoConnect: false, logger: { level: "error" } });
     return { fake, backend, demo, manager, device, stax, adapters };
@@ -307,7 +310,7 @@ describe("the adapters on the live backend (node double)", () => {
       client: fake,
       network: () => ({ ...NETWORKS.local, faucet: "http://localhost:3005/accounts" }),
       approver: () => async () => true,
-      passkeys: softwarePasskeySource(),
+      prf: softwarePrfSource(),
       exposure: {
         mode: "live",
         async check() {
@@ -317,10 +320,10 @@ describe("the adapters on the live backend (node double)", () => {
       fetcher: fake.faucet,
       sleep: async () => undefined,
     });
-    const demo = createDemo(backend);
+    const demo = createDemo(backend, { storage: memoryStorage(), nodeKey: "ws://test" });
     const adapters = createWalletAdapters(
       { backend, demo, network: createAppContext().network, device },
-      softwarePasskeySource(),
+      softwarePrfSource(),
     );
     const manager = new WalletManager({ adapters, autoConnect: false, logger: { level: "error" } });
     Object.defineProperty(navigator, "hid", { value: {}, configurable: true });
@@ -345,8 +348,8 @@ describe("the adapters on the live backend (node double)", () => {
   });
 
   it("signs with the real transaction hash and the signer's real address, not the simulation's", async () => {
-    const { manager, demo, backend } = await liveRig();
-    const account = await manager.connect("passkey-mac");
+    const { manager, backend } = await liveRig();
+    const account = await manager.connect("mac-touch-id");
     const signed = await manager.sign({
       TransactionType: "Payment",
       Account: account.address,
@@ -357,12 +360,15 @@ describe("the adapters on the live backend (node double)", () => {
     expect(signed.signerAddress).toMatch(/^r/);
     expect(signed.signerAddress).not.toMatch(/^rSim/);
     expect(signed.hash).toBe(backend.node.transactionHash(signed["tx"] as never));
-    expect(demo.state.objects?.passkeys).toBeDefined();
   });
 
-  it("registers the live wallet's passkey, which signs the node's binary signing data", async () => {
-    const { manager, fake } = await liveRig();
-    const account = await manager.connect("passkey-mac");
+  it("sets the Mac account up with real ML-DSA-44 signatures the node checks, no passkey on the ledger", async () => {
+    const { manager, fake, demo } = await liveRig();
+    const account = await manager.connect("mac-touch-id");
+    const onLedger = fake.accounts.get(account.address);
+    expect(onLedger?.masterDisabled).toBe(true);
+    expect(onLedger?.regularKey).toBe(demo.accountSignerAddress());
+    expect(onLedger?.passkeys).toHaveLength(0);
     const result = await manager.signAndSubmit({
       TransactionType: "Payment",
       Account: account.address,
@@ -370,6 +376,7 @@ describe("the adapters on the live backend (node double)", () => {
       Amount: "2000000",
     } as never);
     expect(result["engine_result"]).toBe("tesSUCCESS");
-    expect(fake.accounts.get(account.address)?.passkeys).toHaveLength(1);
+    // Signed by the ML-DSA-44 key opened from the vault: a 1 312-byte public key.
+    expect(String((result["tx"] as Record<string, unknown>)["SigningPubKey"])).toHaveLength(2624);
   });
 });

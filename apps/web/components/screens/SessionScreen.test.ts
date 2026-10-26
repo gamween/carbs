@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import SessionScreen from "./SessionScreen.vue";
-import { flushPromises, mountScreen } from "./test-utils";
+import { flushPromises, mountScreen, settled } from "./test-utils";
 
 describe("Session screen", () => {
   it("asks for an account first", () => {
@@ -14,7 +14,7 @@ describe("Session screen", () => {
     await ctx.demo.createAccount("mac");
     await flushPromises();
     await wrapper.get("form").trigger("submit");
-    await flushPromises();
+    await settled(ctx);
     expect(wrapper.get("[data-testid='session-result'] [data-testid='result-code']").text()).toBe(
       "tesSUCCESS",
     );
@@ -29,13 +29,13 @@ describe("Session screen", () => {
     await wrapper.get("[data-testid='mode-C']").setValue(true);
     await wrapper.get("[data-testid='cap']").setValue(20);
     await wrapper.get("form").trigger("submit");
-    await flushPromises();
+    await settled(ctx);
     expect(wrapper.get("[data-testid='spent']").text()).toBe("0 XRP of 20 XRP");
     await ctx.demo.runAction("payment");
     await flushPromises();
     expect(wrapper.get("[data-testid='spent']").text()).toBe("3.500012 XRP of 20 XRP");
     await wrapper.get("[data-testid='close-session']").trigger("click");
-    await flushPromises();
+    await settled(ctx);
     expect(wrapper.get("[data-testid='session-result'] [data-testid='result-code']").text()).toBe(
       "tesSUCCESS",
     );
@@ -47,7 +47,7 @@ describe("Session screen", () => {
     await ctx.demo.createAccount("mac");
     await flushPromises();
     await wrapper.get("form").trigger("submit");
-    await flushPromises();
+    await settled(ctx);
     await wrapper.get("[data-testid='advance']").trigger("click");
     await ctx.demo.advance(600);
     await flushPromises();
@@ -66,7 +66,7 @@ describe("Session screen", () => {
     await flushPromises();
     await wrapper.get("[data-testid='mode-A']").setValue(true);
     await wrapper.get("form").trigger("submit");
-    await flushPromises();
+    await settled(ctx);
     expect(seen).toContain("Allows: All transactions");
     expect(seen).toContain("Valid for: 10 minutes");
     expect(seen.some((line) => line.startsWith("Note: Cannot change keys"))).toBe(true);

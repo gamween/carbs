@@ -11,7 +11,7 @@ import { createDemo } from "./demo";
 import { createLiveBackend } from "./live/backend";
 import { isLiveChoice, type ChoiceStorage, type NodeChoice } from "./node-choice";
 import { NODE_TIMEOUT_MS, withTimeout } from "./timeout";
-import type { PasskeySource } from "./wallets/adapters";
+import type { PrfSource } from "./wallets/prf";
 
 export interface BackendStatus {
   /** The node the person chose (saved in the browser, or the build's default). */
@@ -26,7 +26,7 @@ export interface BackendStatus {
 
 export interface BootOptions {
   requested: NodeChoice;
-  passkeys: PasskeySource;
+  prf: PrfSource;
   /** The node's client; closed when the node is refused. */
   clientFactory?: (url: string) => NodeClient & { close?: () => void };
   fetcher?: typeof fetch;
@@ -70,7 +70,7 @@ export async function chooseBackend(
         network,
         approver: () => (review) => ctx.prompt.approver(review),
         device: ctx.deviceSelection,
-        passkeys: options.passkeys,
+        prf: options.prf,
         exposure: ctx.liveExposure,
         ...(options.fetcher === undefined ? {} : { fetcher: options.fetcher }),
         ...(options.sleep === undefined ? {} : { sleep: options.sleep }),

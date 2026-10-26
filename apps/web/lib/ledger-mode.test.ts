@@ -14,7 +14,7 @@ describe("Ledger mode", () => {
   it("is off with no Ledger involved: no account, a Mac account, a demo account", () => {
     expect(isLedgerMode(idle)).toBe(false);
     expect(isLedgerMode({ ...idle, profile: "mac" })).toBe(false);
-    expect(isLedgerMode({ ...idle, walletId: "passkey-mac" })).toBe(false);
+    expect(isLedgerMode({ ...idle, walletId: "mac-touch-id" })).toBe(false);
     expect(isLedgerMode({ ...idle, walletId: "demo-account" })).toBe(false);
   });
 

@@ -3,7 +3,7 @@ import { createAppContext } from "./app-context";
 import { chooseBackend } from "./boot";
 import { FakeAlphaNet } from "./live/fake-alphanet";
 import { profileStorageKey } from "./saved-profile";
-import { softwarePasskeySource } from "./wallets/passkey";
+import { softwarePrfSource } from "./wallets/prf";
 
 function boot(options: Parameters<typeof chooseBackend>[1], network = {}) {
   const ctx = createAppContext(network);
@@ -11,7 +11,7 @@ function boot(options: Parameters<typeof chooseBackend>[1], network = {}) {
   return { ctx, run: () => chooseBackend(ctx, options) };
 }
 
-const common = { passkeys: softwarePasskeySource(), sleep: async () => undefined };
+const common = { prf: softwarePrfSource(), sleep: async () => undefined };
 
 describe("choosing the node", () => {
   it("stays on the simulation when it was asked for", async () => {
@@ -55,12 +55,12 @@ describe("choosing the node", () => {
       [
         profileStorageKey("ws://localhost:6006"),
         JSON.stringify({
-          version: 1,
+          version: 2,
           node: "ws://localhost:6006",
           profile: "ledger",
           address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
-          passkeyOnly: false,
           device: "usb",
+          vault: null,
           authority: {
             algorithm: "mldsa44",
             publicKey: "AB",

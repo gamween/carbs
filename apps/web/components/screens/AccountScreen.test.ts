@@ -1,29 +1,31 @@
 import { describe, expect, it } from "vitest";
 import AccountScreen from "./AccountScreen.vue";
-import { codesIn, flushPromises, mountScreen } from "./test-utils";
+import { codesIn, flushPromises, mountScreen, settled } from "./test-utils";
 
 describe("Account screen", () => {
-  it("creates a Mac account with a passkey, state read from the node, SIMULATED", async () => {
+  it("creates the post-quantum Mac account: ML-DSA-44 regular key, master disabled, no passkey on the ledger, SIMULATED", async () => {
     const { wrapper, ctx } = mountScreen(AccountScreen);
     expect(wrapper.find("[data-testid='account-state']").exists()).toBe(false);
     await wrapper.get("[data-testid='create-mac']").trigger("click");
-    await flushPromises();
+    await settled(ctx);
     expect(wrapper.get("[data-testid='address']").text()).toBe(ctx.demo.state.address);
-    expect(wrapper.get("[data-testid='master']").text()).toBe("enabled");
-    expect(wrapper.text()).toContain("Passkeys");
-    expect(ctx.demo.state.objects?.passkeys).toHaveLength(1);
-    expect(codesIn(wrapper)).toEqual(["tesSUCCESS"]);
+    expect(wrapper.get("[data-testid='master']").text()).toBe("disabled");
+    expect(ctx.demo.state.info?.regularKey).toBe(ctx.demo.accountSignerAddress());
+    expect(ctx.demo.state.objects?.passkeys).toHaveLength(0);
+    expect(codesIn(wrapper)).toEqual(["tesSUCCESS", "tesSUCCESS", "tesSUCCESS"]);
+    expect(wrapper.get("[data-testid='setup-steps']").text()).toContain(
+      "SIMULATED: software PRF, no Touch ID",
+    );
     expect(wrapper.find("[data-testid='sim-badge']").exists()).toBe(true);
   });
 
   it("shows the reserve the node reports, not a constant", async () => {
     const { wrapper, ctx } = mountScreen(AccountScreen);
     await wrapper.get("[data-testid='create-mac']").trigger("click");
-    await flushPromises();
-    // One passkey list: 1 XRP + 1 × 0.2 XRP on the simulated node.
-    expect(ctx.demo.state.info?.ownerCount).toBe(1);
+    await settled(ctx);
+    expect(ctx.demo.state.info?.ownerCount).toBe(0);
     expect(wrapper.get("[data-testid='reserve']").text()).toMatch(
-      /^1\.2 XRP\s+\(1 XRP \+ 1 × 0\.2 XRP per owned object, as the node reports; [\d.]+ XRP available\)$/,
+      /^1 XRP\s+\(1 XRP \+ 0 × 0\.2 XRP per owned object, as the node reports; [\d.]+ XRP available\)$/,
     );
     // Another node, other reserves: the screen follows (xrpld's defaults of 10 and 2 XRP).
     if (ctx.demo.state.server === null) throw new Error("no server info");
@@ -32,18 +34,23 @@ describe("Account screen", () => {
       reserves: { baseDrops: 10_000_000, ownerDrops: 2_000_000 },
     };
     await flushPromises();
-    expect(wrapper.get("[data-testid='reserve']").text()).toContain("12 XRP");
+    expect(wrapper.get("[data-testid='reserve']").text()).toMatch(/^10 XRP/);
     ctx.demo.state.server = { ...ctx.demo.state.server, reserves: null };
     await flushPromises();
     expect(wrapper.get("[data-testid='reserve']").text()).toBe("not reported by the node");
   });
 
-  it("says the Mac account's passkey is P-256, not that every passkey is", () => {
+  it("says why the Mac account uses PRF, what is not verified, and that it is full post-quantum", () => {
     const { wrapper } = mountScreen(AccountScreen);
     const mac = wrapper.get("[data-testid='profile-mac']").text();
-    expect(mac).toContain("P-256 passkey");
-    expect(mac).toContain("ML-DSA-44 passkeys (PasskeyMLDSA)");
-    expect(mac).toContain("this page does not make them");
+    expect(mac).not.toContain("P-256 passkey");
+    expect(mac).toContain("No P-256 key reaches the ledger");
+    expect(mac).toContain("cannot create an ML-DSA-44 passkey (COSE -48)");
+    expect(mac).toContain("PRF with a real Touch ID has not been verified yet");
+    expect(mac).toContain("software PRF double (SIMULATED");
+    expect(wrapper.text()).toContain(
+      "Full post-quantum: no classical key in the flow, except the master key, which the setup disables.",
+    );
     const ledger = wrapper.get("[data-testid='profile-ledger']").text();
     expect(ledger).toContain("without side-channel countermeasures");
     expect(ledger).toContain("extractible");
@@ -57,16 +64,6 @@ describe("Account screen", () => {
     expect(wrapper.get("[data-testid='profile-mac']").text()).not.toMatch(/device/i);
   });
 
-  it("runs the passkey-only recipe: blackhole regular key, master disabled", async () => {
-    const { wrapper, ctx } = mountScreen(AccountScreen);
-    await wrapper.get("[data-testid='passkey-only']").setValue(true);
-    await wrapper.get("[data-testid='create-mac']").trigger("click");
-    await flushPromises();
-    expect(wrapper.get("[data-testid='master']").text()).toBe("disabled");
-    expect(ctx.demo.state.info?.regularKey).toBe("rrrrrrrrrrrrrrrrrrrrBZbvji");
-    expect(codesIn(wrapper)).toEqual(["tesSUCCESS", "tesSUCCESS", "tesSUCCESS"]);
-  });
-
   it("creates a Ledger account in three device-signed steps, master disabled, no passkey", async () => {
     const { wrapper, ctx } = mountScreen(AccountScreen);
     await wrapper.get("[data-testid='create-ledger']").trigger("click");
@@ -78,7 +75,10 @@ describe("Account screen", () => {
 
   it("names the buttons for what they do: a new Mac account, the Ledger's own account", () => {
     const { wrapper } = mountScreen(AccountScreen);
-    expect(wrapper.get("[data-testid='create-mac']").text()).toBe("Create a new Mac account");
+    // The software PRF double is SIMULATED, and the button says so.
+    expect(wrapper.get("[data-testid='create-mac']").text()).toMatch(
+      /^Create a new Mac account\s*SIMULATED$/,
+    );
     expect(wrapper.get("[data-testid='create-ledger']").text()).toBe("Set up the Ledger account");
     expect(wrapper.get("[data-testid='use-ledger']").text()).toBe("Use the account already set up");
     expect(wrapper.get("[data-testid='ledger-account-note']").text()).toContain(
@@ -149,7 +149,7 @@ describe("Account screen, steps signed on the simulated device", () => {
     expect(badged).toHaveLength(3);
   });
 
-  it("badges none for a passkey account on a live node", async () => {
+  it("badges no step as a simulated device for a Mac account on a live node", async () => {
     const mounted = mountScreen(AccountScreen);
     const backend = { ...mounted.ctx.backend, mode: "live" } as typeof mounted.ctx.backend;
     const live = mountScreen(AccountScreen, { backend });

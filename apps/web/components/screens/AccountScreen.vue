@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import BusyNote from "~/components/ui/BusyNote.vue";
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import ExplorerLink from "~/components/ui/ExplorerLink.vue";
 import LedgerDevicePicker from "~/components/ui/LedgerDevicePicker.vue";
 import ResultView from "~/components/ui/ResultView.vue";
@@ -14,10 +14,16 @@ import { PROFILE_LABELS, type Profile } from "~/lib/demo";
 const backend = useBackend();
 const demo = useDemo();
 const state = demo.state;
-const passkeyOnly = ref(false);
 const webHid = hasWebHid();
 // The simulated Stax needs no browser support; the real one does.
 const ledgerBlocked = computed(() => backend.device.mode === "live" && !webHid);
+
+// How the Mac account's key opens: Touch ID, or, on the simulation, the software PRF double.
+const macUnlock = computed(() =>
+  backend.wallet.prfSimulated
+    ? "opened by the software PRF double (SIMULATED: no passkey, no Touch ID)"
+    : "opened by Touch ID through the passkey's WebAuthn PRF extension",
+);
 
 // Who signs a Ledger account's own transactions: the Stax, or, on the simulation, software keys.
 const ledgerSigner = computed(() =>
@@ -30,9 +36,9 @@ const PROFILES = computed<readonly { id: Profile; title: string; body: string; n
   () => [
     {
       id: "mac",
-      title: "Mac account",
-      body: "Keeps its master key and has a P-256 passkey from this browser's authenticator. The passkey opens sessions; the session key is a non-extractible P-256 key.",
-      note: "Not post-quantum: the P-256 passkey has full authority, its public key is on the ledger, and a passkey list cannot be replaced or removed. The node also takes ML-DSA-44 passkeys (PasskeyMLDSA), which a Stax running the carbs Security Key app can hold; this page does not make them.",
+      title: "Mac account (Touch ID)",
+      body: `An ML-DSA-44 key as regular key, master key disabled after an ML-DSA-44 proof. The key is sealed in this browser and ${macUnlock.value}; it opens sessions, and session keys are ML-DSA-44 too. No P-256 key reaches the ledger: the passkey is only the PRF oracle.`,
+      note: "Why PRF: Apple's platform authenticator cannot create an ML-DSA-44 passkey (COSE -48), so the passkey releases a secret (WebAuthn PRF, then HKDF-SHA256 and AES-256-GCM bound to the account's address) that unlocks the ML-DSA-44 key. PRF with a real Touch ID has not been verified yet, only a virtual authenticator. The sealed key lives in this browser only: clearing its site data loses the account.",
     },
     {
       id: "ledger",
@@ -61,7 +67,7 @@ const nodeNetwork = computed(() => backend.node.explorerNetwork());
 const simulated = computed(() => backend.mode === "simulated");
 
 async function create(profile: Profile): Promise<void> {
-  await demo.createAccount(profile, { passkeyOnly: profile === "mac" && passkeyOnly.value });
+  await demo.createAccount(profile);
 }
 
 /** The Ledger account is the device's own: the same Stax always gives the same address. */
@@ -74,9 +80,10 @@ const ledgerAccountNote = computed(() =>
 
 <template>
   <section>
-    <ScreenHeader eyebrow="Account" title="Two kinds of account">
-      Pick a profile. A Mac account is new each time; a Ledger account is the device's own.
-      Everything below is read back from the node.
+    <ScreenHeader eyebrow="Account" title="Two post-quantum accounts">
+      Full post-quantum: no classical key in the flow, except the master key, which the setup
+      disables. A Mac account is new each time; a Ledger account is the device's own. Everything
+      below is read back from the node.
     </ScreenHeader>
 
     <div class="grid gap-5 md:grid-cols-2">
@@ -89,10 +96,6 @@ const ledgerAccountNote = computed(() =>
         <h2 class="panel-title">{{ profile.title }}</h2>
         <p>{{ profile.body }}</p>
         <p class="text-sm text-muted-foreground">{{ profile.note }}</p>
-        <label v-if="profile.id === 'mac'" class="flex items-center gap-2 text-sm">
-          <input v-model="passkeyOnly" type="checkbox" data-testid="passkey-only" />
-          Passkey-only recipe: regular key to the blackhole address, master key disabled
-        </label>
         <p
           v-if="profile.id === 'ledger' && !webHid"
           class="text-sm text-warn"
@@ -120,6 +123,10 @@ const ledgerAccountNote = computed(() =>
             @click="create(profile.id)"
           >
             {{ profile.id === "mac" ? "Create a new Mac account" : "Set up the Ledger account" }}
+            <SimBadge
+              v-if="profile.id === 'mac' && backend.wallet.prfSimulated"
+              title="Software PRF double: no passkey, no Touch ID"
+            />
           </button>
           <button
             v-if="profile.id === 'ledger'"
@@ -158,8 +165,7 @@ const ledgerAccountNote = computed(() =>
             </dd>
             <dt>Profile</dt>
             <dd>
-              {{ state.profile ? PROFILE_LABELS[state.profile] : ""
-              }}{{ state.passkeyOnly ? " (passkey-only)" : "" }}
+              {{ state.profile ? PROFILE_LABELS[state.profile] : "" }}
             </dd>
             <dt>Balance</dt>
             <dd data-testid="balance">{{ formatXrp(state.info.balanceDrops) }}</dd>
@@ -191,7 +197,7 @@ const ledgerAccountNote = computed(() =>
               />
               <template v-else>none</template>
             </dd>
-            <dt>Passkeys</dt>
+            <dt>Passkeys on the ledger</dt>
             <dd>{{ state.objects?.passkeys.length ?? 0 }}</dd>
             <dt>Sessions</dt>
             <dd>{{ state.objects?.sessions.length ?? 0 }}</dd>

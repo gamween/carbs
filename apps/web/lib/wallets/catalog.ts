@@ -3,7 +3,8 @@
  * parts are SIMULATED. Written once here so the modal, the tests and the docs agree.
  */
 
-export type WalletId = "ledger-stax-usb" | "ledger-stax-simulated" | "passkey-mac" | "demo-account";
+export type WalletId =
+  "ledger-stax-usb" | "ledger-stax-simulated" | "mac-touch-id" | "demo-account";
 
 /** A part of the setup that can be simulated. */
 export type SimulatedPart = "node" | "device" | "authenticator" | "account";
@@ -57,17 +58,19 @@ export const LEDGER_STAX_SIMULATED: WalletDescription = {
   alwaysSimulated: ["device"],
 };
 
-export const PASSKEY_MAC: WalletDescription = {
-  id: "passkey-mac",
-  name: "Passkey (this Mac)",
-  keyType: "P-256 passkey (WebAuthn, this browser's authenticator); not post-quantum",
+/** The post-quantum Mac account: Touch ID, WebAuthn PRF, an ML-DSA-44 key sealed in the browser. */
+export const MAC_TOUCH_ID: WalletDescription = {
+  id: "mac-touch-id",
+  name: "Mac account (Touch ID)",
+  keyType:
+    "ML-DSA-44 key (post-quantum), sealed in this browser and unlocked by Touch ID through the WebAuthn PRF extension",
   signs: [
-    "Master key (secp256k1, in the page): PasskeyListSet, once, during setup",
-    "Passkey (Touch ID or Face ID): opens sessions and signs what the account's own authority signs",
-    "Session key (P-256, non-extractible): the transactions inside its session, no prompt",
+    "Master key (secp256k1, in the page): SetRegularKey and asfDisableMaster, during setup only; then disabled",
+    "ML-DSA-44 key (Touch ID opens it): opens sessions and signs what the account's own authority signs",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
   ],
   summary:
-    "The P-256 passkey has full authority and cannot be replaced or removed once registered, so this account is not post-quantum. ML-DSA-44 passkeys (PasskeyMLDSA) are not made here.",
+    "Apple's platform authenticator cannot create an ML-DSA-44 passkey (COSE -48), so the passkey here only releases a PRF secret that unlocks an ML-DSA-44 key; the passkey never reaches the ledger. PRF with a real Touch ID has not been verified yet, only a virtual authenticator.",
   simulatedWhenBackendSimulated: ["node"],
   alwaysSimulated: [],
 };
@@ -78,9 +81,10 @@ export const DEMO_ACCOUNT: WalletDescription = {
   keyType: "secp256k1 master key, in memory, thrown away on reload",
   signs: [
     "Master key (in the page): everything the account's own authority signs",
-    "Session key (P-256, non-extractible): the transactions inside its session, no prompt",
+    "Session key (ML-DSA-44, made in the page, in memory): the transactions inside its session, no prompt",
   ],
-  summary: "A throw-away account to try the screens. Nothing is kept.",
+  summary:
+    "A throw-away account to try the screens. Its master key is classical (secp256k1) and stays enabled, so it is not post-quantum. Nothing is kept.",
   // On a live node the account is real (funded by its faucet); only its key is thrown away.
   simulatedWhenBackendSimulated: ["node", "account"],
   alwaysSimulated: [],
@@ -89,7 +93,7 @@ export const DEMO_ACCOUNT: WalletDescription = {
 export const WALLET_DESCRIPTIONS: readonly WalletDescription[] = [
   LEDGER_STAX_USB,
   LEDGER_STAX_SIMULATED,
-  PASSKEY_MAC,
+  MAC_TOUCH_ID,
   DEMO_ACCOUNT,
 ];
 
@@ -108,13 +112,13 @@ export function simulatedParts(
   const parts = new Set<SimulatedPart>(description.alwaysSimulated);
   if (backendSimulated)
     for (const part of description.simulatedWhenBackendSimulated) parts.add(part);
-  if (description.id === "passkey-mac" && authenticatorSimulated) parts.add("authenticator");
+  if (description.id === "mac-touch-id" && authenticatorSimulated) parts.add("authenticator");
   return PART_ORDER.filter((part) => parts.has(part));
 }
 
 export const PART_LABELS: Record<SimulatedPart, string> = {
   node: "node",
   device: "Stax",
-  authenticator: "passkey",
+  authenticator: "Touch ID (software PRF)",
   account: "account",
 };

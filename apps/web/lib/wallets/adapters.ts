@@ -5,7 +5,7 @@
  * `getNetwork`, `sign`, `signAndSubmit`, `signMessage`, `on`, `off`). Four adapters, and
  * only these: the real Ledger Stax over USB and its SIMULATED software double (Device
  * Management Kit only: the legacy ledgerjs adapter of xrpl-connect is never imported), a
- * passkey on this Mac, and a throw-away demo account.
+ * post-quantum Mac account unlocked by Touch ID (WebAuthn PRF), and a throw-away demo account.
  * None of them needs an API key or loads a third-party script.
  */
 import type {
@@ -23,15 +23,14 @@ import { hasWebHid } from "../browser-support";
 import { DEFAULT_FEE_DROPS } from "../constants";
 import type { Demo, Profile } from "../demo";
 import type { NetworkStore } from "../network-store";
-import type { Backend, KeyHandle, TxJson } from "../ports";
+import type { Backend, TxJson } from "../ports";
 import { NOT_CONNECTED_MESSAGE, type DeviceSelection } from "../live/device-selection";
-import type { PasskeyCredential } from "@carbs/sessions";
-import type { PasskeyMaterial } from "./passkey";
+import type { PrfSource } from "./prf";
 import {
   DEMO_ACCOUNT,
   LEDGER_STAX_SIMULATED,
   LEDGER_STAX_USB,
-  PASSKEY_MAC,
+  MAC_TOUCH_ID,
   type WalletDescription,
   type WalletId,
 } from "./catalog";
@@ -43,21 +42,6 @@ export interface WalletHost {
   network: NetworkStore;
   /** The device of the live backend: the real Stax over USB, or the software double. */
   device: DeviceSelection;
-}
-
-/** Where a passkey comes from: the browser's authenticator, or the software one in tests. */
-export interface PasskeySource {
-  /** True for the software authenticator (SIMULATED). */
-  simulated: boolean;
-  available(): boolean;
-  create(): Promise<KeyHandle>;
-  /** The passkey and its authenticator, for a live wallet that signs through `@carbs/sessions`. */
-  material(): Promise<PasskeyMaterial>;
-  /**
-   * A passkey made before a page reload, by credential id and public key; absent where the
-   * authenticator does not outlive the page (the software one).
-   */
-  restore?(credential: PasskeyCredential): PasskeyMaterial;
 }
 
 type Listener = (data: unknown) => void;
@@ -137,7 +121,7 @@ abstract class CarbsAdapter implements WalletAdapter {
     const signed = await this.signJson(transaction);
     return {
       hash: this.host.backend.node.transactionHash(signed),
-      signature: signed.TxnSignature ?? JSON.stringify(signed["PasskeySignature"] ?? ""),
+      signature: signed.TxnSignature ?? "",
       signerAddress: this.host.demo.accountSignerAddress() ?? "",
       tx: signed,
     };
@@ -243,37 +227,28 @@ export class LedgerStaxSimulatedAdapter extends CarbsAdapter {
   }
 }
 
-/** A passkey on this Mac: the browser's authenticator in the browser, the software one in tests. */
-export class PasskeyMacAdapter extends CarbsAdapter {
-  readonly id = "passkey-mac";
-  readonly name = PASSKEY_MAC.name;
-  readonly description = PASSKEY_MAC;
+/**
+ * The post-quantum Mac account: Touch ID releases a WebAuthn PRF secret that unlocks an
+ * ML-DSA-44 key sealed in this browser. On the simulation the PRF is the software double.
+ */
+export class MacTouchIdAdapter extends CarbsAdapter {
+  readonly id = "mac-touch-id";
+  readonly name = MAC_TOUCH_ID.name;
+  readonly description = MAC_TOUCH_ID;
 
   constructor(
     host: WalletHost,
-    readonly passkeys: PasskeySource,
+    readonly prf: PrfSource,
   ) {
     super(host);
   }
 
   async isAvailable(): Promise<boolean> {
-    return this.passkeys.available();
+    return this.host.backend.mode === "simulated" || this.prf.available();
   }
 
   protected async open(): Promise<void> {
-    const label = this.passkeys.simulated
-      ? "Create a passkey (SIMULATED: software authenticator, no prompt)"
-      : "Create a passkey with this browser's authenticator";
-    // On the live backend the wallet signs the node's binary signing data itself, with the same
-    // passkey source; on the simulation the passkey signs the simulated node's challenge.
-    const ok = await this.host.demo.createAccount(
-      "mac",
-      this.host.backend.mode === "live"
-        ? { passkeyLabel: label }
-        : { passkey: () => this.passkeys.create(), passkeyLabel: label },
-    );
-    if (!ok)
-      throw new Error(this.host.demo.state.error ?? `${this.name} could not set up the account`);
+    await createFor(this.host, "mac", this.name);
   }
 }
 
@@ -295,11 +270,11 @@ export class DemoAccountAdapter extends CarbsAdapter {
 export type { CarbsAdapter };
 
 /** The four adapters, in display order. */
-export function createWalletAdapters(host: WalletHost, passkeys: PasskeySource): CarbsAdapter[] {
+export function createWalletAdapters(host: WalletHost, prf: PrfSource): CarbsAdapter[] {
   return [
     new LedgerStaxUsbAdapter(host),
     new LedgerStaxSimulatedAdapter(host),
-    new PasskeyMacAdapter(host, passkeys),
+    new MacTouchIdAdapter(host, prf),
     new DemoAccountAdapter(host),
   ];
 }

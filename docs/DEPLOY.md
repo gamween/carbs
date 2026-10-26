@@ -44,11 +44,11 @@ To use a node of ours on another host, put it behind TLS (a reverse proxy that t
 
 ## Wallets
 
-The wallet entry offers a real Ledger Stax over USB (on a live node), a simulated one, a passkey on this Mac and a demo account, with no API key and no third-party service. A passkey needs a secure context: `https://` or `http://localhost`. Over plain `http://` on a LAN address the browser exposes no WebAuthn and the entry says so.
+The wallet entry offers a real Ledger Stax over USB (on a live node), a simulated one, the post-quantum Mac account (Touch ID) and a demo account, with no API key and no third-party service. The Mac account needs WebAuthn with the PRF extension in a secure context: `https://` or `http://localhost`. Over plain `http://` on a LAN address the browser exposes no WebAuthn and the entry says so; an authenticator without PRF is refused with that reason before anything is sent. PRF with a real Touch ID is not verified yet.
 
-## The Mac account demo needs our own node
+## Both accounts need our own node
 
-A passkey signs with WebAuthn, and the public AlphaNet's validators may refuse such a transaction until they carry the WebAuthn challenge fix (`fixPasskeyChallenge`, `infra/README.md`): where `char` is signed, the challenge comparison of the imported tree fails for any byte at or above 0x80. The Mac account demo against the real node therefore needs **our own node**, started from `infra/standalone.cfg`, which enables the fix. The Ledger account does not use a passkey.
+The Mac account and the Ledger account open sessions (`SigningSessions`), which only **our own node** has, started from `infra/standalone.cfg`; their keys are ML-DSA-44 (`Quantum`). The Mac account's passkey never signs a transaction: it only releases the PRF secret that opens the ML-DSA-44 key, so `fixPasskeyChallenge` does not concern it.
 
 ## Browsers
 

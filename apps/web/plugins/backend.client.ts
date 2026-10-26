@@ -15,7 +15,7 @@ import {
 } from "~/lib/context";
 import { watchLedgerDisconnects } from "~/lib/live/device-selection";
 import type { NetworkStoreOptions } from "~/lib/network-store";
-import { browserPasskeySource } from "~/lib/wallets/passkey";
+import { browserPrfSource } from "~/lib/wallets/prf";
 
 /** A runtime-config value, or nothing when it is empty (the default of `lib/networks.ts` applies). */
 function configured(value: unknown): string | undefined {
@@ -45,7 +45,7 @@ export default defineNuxtPlugin(async (nuxtApp) => {
   const requested = readNodeChoice(window.localStorage, config.backend);
   const { ctx, status } = await chooseBackend(base, {
     requested,
-    passkeys: browserPasskeySource(),
+    prf: browserPrfSource(),
     storage: window.localStorage,
   });
   if (status.active !== status.requested) clearNodeChoice(window.localStorage);

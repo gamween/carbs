@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createAppContext } from "./app-context";
 import { chooseBackend } from "./boot";
 import { probeNode } from "./node-probe";
-import { softwarePasskeySource } from "./wallets/passkey";
+import { softwarePrfSource } from "./wallets/prf";
 
 interface Stalled {
   url: string;
@@ -60,7 +60,7 @@ describe("hanging up on a node that never completes the handshake", () => {
     const ctx = createAppContext({ localWss: node.url });
     const { status } = await chooseBackend(ctx, {
       requested: "local",
-      passkeys: softwarePasskeySource(),
+      prf: softwarePrfSource(),
       timeoutMs: 200,
     });
     expect(status.active).toBe("simulated");

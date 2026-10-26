@@ -1,10 +1,12 @@
 /**
  * The account a page reload must not forget: what the screens need to find it on the node
- * again, and nothing that signs. Address, profile, node and the public key of the account's
- * own authority (the Stax's ML-DSA-44 key, or the passkey's public key and credential id).
- * Never a seed, a private key or a session key: session keys are non-extractible WebCrypto
- * keys (or ML-DSA-44 keys kept in memory) and live for one session in one page.
+ * again. Address, profile, node and the public key of the account's own authority, the
+ * ML-DSA-44 key (the Stax's, or the Mac account's). For a Mac account also its sealed vault:
+ * the ML-DSA-44 seed encrypted under the passkey's PRF secret (AES-256-GCM), which opens only
+ * after Touch ID and is the only copy of that key. Never a key in clear, never a session key:
+ * session keys live for one session in one page.
  */
+import { isPqVault, type PqVault } from "@carbs/sessions";
 import type { KeyAlgorithm } from "./ports";
 import type { ChoiceStorage } from "./node-choice";
 
@@ -12,14 +14,14 @@ import type { ChoiceStorage } from "./node-choice";
 export function profileStorageKey(node: string): string {
   return `carbs-profile:${node}`;
 }
-const SAVED_PROFILE_VERSION = 1;
+/** 2: the Mac account became the PRF vault account (version 1 held a P-256 passkey). */
+const SAVED_PROFILE_VERSION = 2;
 
-/** A public key, with its credential id for a passkey. */
+/** A public key and its address. */
 export interface SavedKey {
   algorithm: KeyAlgorithm;
   publicKey: string;
   address: string;
-  credentialId?: string;
 }
 
 export interface SavedProfile {
@@ -29,11 +31,12 @@ export interface SavedProfile {
   /** Only these two survive a reload: a demo account's master key is thrown away with the page. */
   profile: "mac" | "ledger";
   address: string;
-  passkeyOnly: boolean;
   /** Ledger accounts: the real Stax over USB, whose keys outlive the page. */
   device: "usb" | null;
-  /** The account's own authority: the device's ML-DSA-44 key or the passkey. */
+  /** The account's own authority: the ML-DSA-44 key, as its regular key. */
   authority: SavedKey;
+  /** Mac accounts: the sealed ML-DSA-44 seed. */
+  vault: PqVault | null;
 }
 
 const ALGORITHMS: readonly KeyAlgorithm[] = ["secp256k1", "p256", "mldsa44"];
@@ -50,15 +53,11 @@ function isAlgorithm(value: unknown): value is KeyAlgorithm {
 
 function savedKey(value: unknown): SavedKey | null {
   if (!isRecord(value)) return null;
-  const { algorithm, publicKey, address, credentialId } = value;
+  const { algorithm, publicKey, address } = value;
   if (!isAlgorithm(algorithm)) return null;
   if (typeof publicKey !== "string" || !HEX.test(publicKey)) return null;
   if (typeof address !== "string" || !ADDRESS.test(address)) return null;
-  if (credentialId !== undefined && (typeof credentialId !== "string" || !HEX.test(credentialId)))
-    return null;
-  const key: SavedKey = { algorithm, publicKey, address };
-  if (credentialId !== undefined) key.credentialId = credentialId;
-  return key;
+  return { algorithm, publicKey, address };
 }
 
 /** The saved profile, checked field by field; anything else (or nothing) is null. */
@@ -71,15 +70,37 @@ export function parseSavedProfile(text: string | null): SavedProfile | null {
     return null;
   }
   if (!isRecord(value) || value["version"] !== SAVED_PROFILE_VERSION) return null;
-  const { node, profile, address, passkeyOnly, device } = value;
+  const { node, profile, address, device, vault } = value;
   const authority = savedKey(value["authority"]);
   if (typeof node !== "string" || node === "") return null;
   if (profile !== "mac" && profile !== "ledger") return null;
   if (typeof address !== "string" || !ADDRESS.test(address)) return null;
-  if (typeof passkeyOnly !== "boolean") return null;
   if (device !== "usb" && device !== null) return null;
   if (authority === null) return null;
-  return { version: SAVED_PROFILE_VERSION, node, profile, address, passkeyOnly, device, authority };
+  // A Mac account needs its vault, sealed for this very account; a Ledger account has none.
+  let sealed: PqVault | null = null;
+  if (profile === "mac") {
+    if (!isPqVault(vault) || vault.account !== address) return null;
+    sealed = {
+      version: vault.version,
+      credentialId: vault.credentialId,
+      account: vault.account,
+      mlDsaAddress: vault.mlDsaAddress,
+      publicKey: vault.publicKey,
+      salt: vault.salt,
+      iv: vault.iv,
+      ciphertext: vault.ciphertext,
+    };
+  } else if (vault !== null) return null;
+  return {
+    version: SAVED_PROFILE_VERSION,
+    node,
+    profile,
+    address,
+    device,
+    authority,
+    vault: sealed,
+  };
 }
 
 export function newSavedProfile(fields: Omit<SavedProfile, "version">): SavedProfile {
@@ -112,5 +133,25 @@ export function clearSavedProfile(storage: ChoiceStorage | null, node: string): 
     storage?.removeItem(profileStorageKey(node));
   } catch {
     // Nothing saved, or storage blocked.
+  }
+}
+
+/**
+ * A Mac account's vault is the only copy of its ML-DSA-44 key: besides the profile, which a new
+ * setup or a disconnect replaces, it is kept under its account's own key, which the page never
+ * removes.
+ */
+export function vaultStorageKey(account: string): string {
+  return `carbs-vault:${account}`;
+}
+
+/** Keeps the vault under its account's key; true when it reads back unchanged. */
+export function archiveVault(storage: ChoiceStorage | null, vault: PqVault): boolean {
+  try {
+    const text = JSON.stringify(vault);
+    storage?.setItem(vaultStorageKey(vault.account), text);
+    return storage?.getItem(vaultStorageKey(vault.account)) === text;
+  } catch {
+    return false;
   }
 }
