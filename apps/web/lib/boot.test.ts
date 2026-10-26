@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createAppContext } from "./app-context";
 import { chooseBackend } from "./boot";
 import { FakeAlphaNet } from "./live/fake-alphanet";
+import { profileStorageKey } from "./saved-profile";
 import { softwarePasskeySource } from "./wallets/passkey";
 
 function boot(options: Parameters<typeof chooseBackend>[1], network = {}) {
@@ -46,6 +47,45 @@ describe("choosing the node", () => {
     });
     expect(ctx.network.state.node).toBe("local");
     expect(chosen.backend.node.explorerNetwork()?.id).toBe("local");
+  });
+
+  it("gives the live node's store the browser's storage, keyed by the node's URL", async () => {
+    const fake = new FakeAlphaNet({ sessions: true });
+    const saved = new Map<string, string>([
+      [
+        profileStorageKey("ws://localhost:6006"),
+        JSON.stringify({
+          version: 1,
+          node: "ws://localhost:6006",
+          profile: "ledger",
+          address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+          passkeyOnly: false,
+          device: "usb",
+          authority: {
+            algorithm: "mldsa44",
+            publicKey: "AB",
+            address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+          },
+        }),
+      ],
+    ]);
+    const storage = {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => void saved.set(key, value),
+      removeItem: (key: string) => void saved.delete(key),
+    };
+    const { run } = boot({
+      ...common,
+      requested: "local",
+      clientFactory: () => fake,
+      fetcher: fake.faucet,
+      storage,
+    });
+    const { ctx: chosen } = await run();
+    // Found under the local node's URL, checked against the node: that account is not on it.
+    expect(await chosen.demo.restore()).toBeNull();
+    expect(chosen.demo.state.error).toContain("not on this node any more");
+    expect(saved.has(profileStorageKey("ws://localhost:6006"))).toBe(false);
   });
 
   it("runs on the team node at its preset URL", async () => {

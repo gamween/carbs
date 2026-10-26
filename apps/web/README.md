@@ -41,6 +41,12 @@ The **Apps** screen shows no result of either backend: it links to the pages of 
 
 `lib/sim/node.test.ts` checks the simulation against the cases of spec 6.15; it proves that the simulation follows the spec and nothing about rippled. The live backend was run against the standalone node in modes A, P and C (see `docs/DEVLOG.md`); the component tests run it against a test double of the node.
 
+### Accounts, and what a reload keeps
+
+A **Mac account** is new each time (a fresh master key, then a passkey). A **Ledger account** is the device's own: its address is that of the Stax's secp256k1 key, so the same Stax always gives the same account. **Set up the Ledger account** reads the two keys and asks the node first: an account already set up (master key disabled, the device's ML-DSA-44 key as regular key) is used as it is, with nothing sent; one an earlier run left half-way is finished, skipping what is done. **Use the account already set up** only reads and checks, never funds or signs. The simulated Stax makes new keys at each setup, so there each setup is a new account. Before each signature the page checks that the device still holds the account's key.
+
+On a live node, the page keeps the account across reloads (`lib/saved-profile.ts`, `localStorage` key `carbs-profile:<node URL>`, one per node): the node's URL, the address, the profile and the public key of the account's own authority (the Stax's ML-DSA-44 key, or the passkey's public key and credential id), and nothing that signs. Session keys are never kept: they are non-extractible WebCrypto keys (or ML-DSA-44 keys in memory) for one session in one page. At the next load the account is checked against the node before it is used, and forgotten if the node no longer agrees (a node that does not answer keeps it for the next load). Only an authority that outlives the page is kept: a real Stax (reconnect it with a click) or a passkey of the browser's authenticator; a demo account, the simulated Stax and the simulation keep nothing.
+
 ## Wallet entry
 
 The header's **Connect wallet** lists three adapters, written against the `WalletAdapter` interface of xrpl-connect 1.0.0 (`lib/wallets/adapters.ts`) and nothing else: **Ledger Stax** (post-quantum root, Device Management Kit only; SIMULATED unless a real Stax is connected over USB on the live backend), **Passkey (this Mac)** (the browser's WebAuthn when you press Connect; the software authenticator of `@carbs/sessions` in tests) and **Demo account** (a key in the page, thrown away on reload; the account is real on a live node, SIMULATED on the simulation). Each shows its key type, who signs what and a SIMULATED badge for the parts that are. No Xaman, WalletConnect or GemWallet adapter, no API key, no environment variable for a wallet. The legacy ledgerjs adapter of xrpl-connect is never imported (a test scans the sources).
@@ -84,6 +90,7 @@ components/ui/           SIMULATED badge, result view, explorer links, device mo
 lib/ports.ts             Node, Device, Wallet, Exposure interfaces
 lib/sim/                 the simulated implementations and their tests
 lib/demo.ts, migration.ts  the stores behind the screens (state is read back from the node)
+lib/saved-profile.ts     the account a reload keeps (public keys and address only)
 lib/live-apps.ts         the Apps screen's catalogue of the team's live apps and the link to their server
 layouts/, pages/         Nuxt routing: /, /account, /session, /actions, /attack, /apps, /quantum
 lib/wallets/             the three wallet adapters, the passkey and the wallet entry's logic

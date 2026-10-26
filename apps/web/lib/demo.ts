@@ -12,6 +12,7 @@ import {
   type AccountInfo,
   type AccountObjects,
   type Backend,
+  type DeviceKey,
   type KeyHandle,
   type NodeResult,
   type SessionParams,
@@ -20,6 +21,15 @@ import {
   type SessionEntry,
   type TxJson,
 } from "./ports";
+import type { ChoiceStorage } from "./node-choice";
+import {
+  clearSavedProfile,
+  newSavedProfile,
+  readSavedProfile,
+  writeSavedProfile,
+  type SavedKey,
+  type SavedProfile,
+} from "./saved-profile";
 import { ACTIONS, ATTACKS, type Attack, type ScenarioContext } from "./scenarios";
 
 /** The Actions and Attack logs keep this many entries. */
@@ -32,6 +42,26 @@ export const PROFILE_LABELS: Record<Profile, string> = {
   ledger: "Ledger account",
   demo: "Demo account",
 };
+
+/** Where the account is kept across reloads; without it, the account lasts for the page. */
+export interface DemoOptions {
+  /** The browser's storage (localStorage); only the non-secret profile goes there. */
+  storage?: ChoiceStorage | null;
+  /** The node the account lives on (its URL); a profile saved for another node is dropped. */
+  nodeKey?: string;
+}
+
+/** Said when the connected Stax is not the one the Ledger account was set up on. */
+export const OTHER_DEVICE_MESSAGE =
+  "This Stax holds other keys than the account's: connect the Stax this account was set up on.";
+
+/** The node answered, and the account saved in the browser no longer matches it. */
+class ProfileMismatch extends Error {}
+
+/** A Ledger account is set up when its master key is disabled and its regular key is the device's ML-DSA-44 key. */
+export function isLedgerAccountSetUp(info: AccountInfo, mlDsaAddress: string): boolean {
+  return info.masterDisabled && info.regularKey === mlDsaAddress;
+}
 
 export interface CreateAccountOptions {
   passkeyOnly?: boolean;
@@ -50,6 +80,8 @@ export interface Signer {
   address: string;
   /** True when each signature is confirmed on the device. */
   onDevice: boolean;
+  /** Passkeys only: the credential id as hex, kept so the passkey can be used after a reload. */
+  credentialId?: string;
   sign(tx: TxJson): Promise<TxJson>;
 }
 
@@ -91,7 +123,9 @@ export interface DemoState {
   error: string | null;
 }
 
-export function createDemo(backend: Backend) {
+export function createDemo(backend: Backend, options: DemoOptions = {}) {
+  const storage = options.storage ?? null;
+  const nodeKey = options.nodeKey ?? "";
   const state = reactive<DemoState>({
     profile: null,
     ready: false,
@@ -227,7 +261,7 @@ export function createDemo(backend: Backend) {
   }
 
   function signerFrom(key: KeyHandle, label: string): Signer {
-    return {
+    const signer: Signer = {
       label,
       algorithm: key.algorithm,
       publicKey: key.publicKey,
@@ -235,6 +269,39 @@ export function createDemo(backend: Backend) {
       onDevice: false,
       sign: (tx) => key.sign(tx),
     };
+    if (key.credentialId !== undefined) signer.credentialId = key.credentialId;
+    return signer;
+  }
+
+  /**
+   * A key of the device. Before each signature it checks that the device still holds that
+   * key: another Stax (or a reset simulated one) would sign with a key the account does not know.
+   */
+  function deviceSigner(
+    algorithm: DeviceKey["algorithm"],
+    key: Pick<DeviceKey, "publicKey" | "address">,
+    label: string,
+  ): Signer {
+    return {
+      label,
+      algorithm,
+      publicKey: key.publicKey,
+      address: key.address,
+      onDevice: true,
+      async sign(tx) {
+        const held = await backend.device.getPublicKey(algorithm);
+        if (held.publicKey.toUpperCase() !== key.publicKey.toUpperCase()) {
+          throw new Error(OTHER_DEVICE_MESSAGE);
+        }
+        return backend.device.signTransaction(algorithm, tx);
+      },
+    };
+  }
+
+  async function readLedgerKeys(): Promise<{ classical: DeviceKey; pq: DeviceKey }> {
+    const classical = await backend.device.getPublicKey("secp256k1");
+    const pq = await backend.device.getPublicKey("mldsa44");
+    return { classical, pq };
   }
 
   async function createAccount(
@@ -250,9 +317,136 @@ export function createDemo(backend: Backend) {
       else await setupDemo();
       await refresh();
       state.ready = true;
+      save();
       return true;
     });
     return done === true;
+  }
+
+  /**
+   * The Ledger account already set up on this device, used as it is: the keys are read, the
+   * node is asked, nothing is funded or signed.
+   */
+  async function useExistingLedgerAccount(): Promise<boolean> {
+    const done = await guarded(async () => {
+      reset();
+      state.profile = "ledger";
+      const { classical, pq } = await readLedgerKeys();
+      state.address = classical.address;
+      addStep("Read the device keys (secp256k1 and ML-DSA-44)").status = "ok";
+      const info = await backend.node.accountInfo(classical.address);
+      if (info === null) {
+        throw new Error(
+          "This device's account does not exist on this node yet: set it up first (Set up the Ledger account).",
+        );
+      }
+      if (!isLedgerAccountSetUp(info, pq.address)) {
+        throw new Error(
+          "This device's account is not set up yet (its master key is enabled, or its regular key is not the device's ML-DSA-44 key): set it up first.",
+        );
+      }
+      addStep(
+        "This Stax's account is already set up (master key disabled, the device's ML-DSA-44 key as regular key): using it, nothing sent",
+      ).status = "ok";
+      master = deviceSigner("secp256k1", classical, "Device master key");
+      fullAuth = deviceSigner("mldsa44", pq, "Device ML-DSA-44 key");
+      await refresh();
+      state.ready = true;
+      save();
+      return true;
+    });
+    return done === true;
+  }
+
+  /* ---- the account across reloads (non-secret profile only) ---- */
+
+  function authorityKey(): SavedKey | null {
+    if (fullAuth === null || state.profile === null || state.profile === "demo") return null;
+    const algorithm = fullAuth.algorithm;
+    if (algorithm !== "secp256k1" && algorithm !== "p256" && algorithm !== "mldsa44") return null;
+    const key: SavedKey = { algorithm, publicKey: fullAuth.publicKey, address: fullAuth.address };
+    if (fullAuth.credentialId !== undefined) key.credentialId = fullAuth.credentialId;
+    return key;
+  }
+
+  /**
+   * Keep what a reload needs to find the account again: only for an authority that outlives the
+   * page (a real Stax, or a passkey of the browser's authenticator), never a demo account's key.
+   */
+  function save(): void {
+    const authority = authorityKey();
+    const address = state.address;
+    if (storage === null || authority === null || address === null) return;
+    const ledger = state.profile === "ledger";
+    if (ledger && backend.device.mode !== "live") return;
+    if (!ledger && backend.wallet.restorePasskey === undefined) return;
+    writeSavedProfile(
+      storage,
+      newSavedProfile({
+        node: nodeKey,
+        profile: ledger ? "ledger" : "mac",
+        address,
+        passkeyOnly: state.passkeyOnly,
+        device: ledger ? "usb" : null,
+        authority,
+      }),
+    );
+  }
+
+  /**
+   * After a reload: the account saved for this node, checked against the node before it is
+   * used. Returns the profile it restored, or null (nothing saved for this node, or the node no
+   * longer agrees, which forgets it).
+   */
+  async function restore(): Promise<SavedProfile | null> {
+    const saved = readSavedProfile(storage, nodeKey);
+    if (saved === null) return null;
+    state.busy = true;
+    try {
+      const info = await backend.node.accountInfo(saved.address);
+      if (info === null) throw new ProfileMismatch(`${saved.address} is not on this node any more`);
+      let authority: Signer;
+      if (saved.profile === "ledger") {
+        if (!isLedgerAccountSetUp(info, saved.authority.address)) {
+          throw new ProfileMismatch(
+            `${saved.address} is no longer set up for its Stax's ML-DSA-44 key`,
+          );
+        }
+        authority = deviceSigner(
+          "mldsa44",
+          { publicKey: saved.authority.publicKey, address: saved.authority.address },
+          "Device ML-DSA-44 key",
+        );
+      } else {
+        const credentialId = saved.authority.credentialId;
+        const restorePasskey = backend.wallet.restorePasskey;
+        if (credentialId === undefined || restorePasskey === undefined) {
+          throw new ProfileMismatch("this browser cannot use the passkey again");
+        }
+        authority = signerFrom(
+          restorePasskey({ publicKey: saved.authority.publicKey, credentialId }),
+          "Passkey",
+        );
+      }
+      reset({ keepSaved: true });
+      state.profile = saved.profile;
+      state.passkeyOnly = saved.passkeyOnly;
+      state.address = saved.address;
+      fullAuth = authority;
+      addStep(
+        "Found again after the reload: this browser kept the address and the public key, the node holds the state",
+      ).status = "ok";
+      await refresh();
+      state.ready = true;
+      return saved;
+    } catch (error) {
+      // Forgotten only when the node answered and disagrees; a node that did not answer may later.
+      reset({ keepSaved: !(error instanceof ProfileMismatch) });
+      state.error = `The account kept in this browser was not restored: ${error instanceof Error ? error.message : String(error)}`;
+      return null;
+    } finally {
+      state.busy = false;
+    }
   }
 
   async function fund(address: string): Promise<void> {
@@ -309,44 +503,59 @@ export function createDemo(backend: Backend) {
     fullAuth = signerFrom(passkey, "Passkey");
   }
 
+  /**
+   * The device's account: the address of its secp256k1 key, so the same Stax always gives the
+   * same account (the simulated Stax makes new keys at each setup). An account already set up
+   * is used as it is; one left half-way by an earlier run is finished, skipping what is done.
+   */
   async function setupLedger(): Promise<void> {
     backend.device.reset();
-    const classical = await backend.device.getPublicKey("secp256k1");
-    const pq = await backend.device.getPublicKey("mldsa44");
-    const onDevice = (algorithm: "secp256k1" | "mldsa44", label: string): Signer => {
-      const key = algorithm === "secp256k1" ? classical : pq;
-      return {
-        label,
-        algorithm,
-        publicKey: key.publicKey,
-        address: key.address,
-        onDevice: true,
-        sign: (tx) => backend.device.signTransaction(algorithm, tx),
-      };
-    };
-    master = onDevice("secp256k1", "Device master key");
-    state.address = classical.address;
+    const { classical, pq } = await readLedgerKeys();
+    master = deviceSigner("secp256k1", classical, "Device master key");
+    const mlDsa = deviceSigner("mldsa44", pq, "Device ML-DSA-44 key");
+    const address = classical.address;
+    state.address = address;
     addStep("Read the device keys (secp256k1 and ML-DSA-44)").status = "ok";
-    await fund(classical.address);
-    await stepTx(
-      "SetRegularKey to the ML-DSA-44 key, signed by the master key on the device",
-      master,
-      build.setRegularKey(classical.address, pq.address),
-    );
-    fullAuth = onDevice("mldsa44", "Device ML-DSA-44 key");
+    const existing = await backend.node.accountInfo(address);
+    if (existing !== null && isLedgerAccountSetUp(existing, pq.address)) {
+      addStep(
+        "This Stax's account is already set up (master key disabled, the device's ML-DSA-44 key as regular key): continuing with it, nothing sent",
+      ).status = "ok";
+      fullAuth = mlDsa;
+      return;
+    }
+    if (existing?.masterDisabled === true) {
+      throw new Error(
+        `${address} has its master key disabled and a regular key that is not this device's ML-DSA-44 key: this page cannot set it up again.`,
+      );
+    }
+    if (existing === null) await fund(address);
+    else addStep("The account is already on the node: no faucet").status = "ok";
+    if (existing?.regularKey === pq.address) {
+      addStep("The regular key is already the device's ML-DSA-44 key").status = "ok";
+    } else {
+      await stepTx(
+        "SetRegularKey to the ML-DSA-44 key, signed by the master key on the device",
+        master,
+        build.setRegularKey(address, pq.address),
+      );
+    }
+    fullAuth = mlDsa;
     await stepTx(
       "Proof transaction, signed by the ML-DSA-44 key on the device",
       fullAuth,
-      build.accountSetNoop(classical.address),
+      build.accountSetNoop(address),
     );
     await stepTx(
       "AccountSet asfDisableMaster, signed by the master key on the device",
       master,
-      build.accountSetDisableMaster(classical.address),
+      build.accountSetDisableMaster(address),
     );
   }
 
-  function reset(): void {
+  function reset(options: { keepSaved?: boolean } = {}): void {
+    // What is kept for a reload always matches a ready account: a new setup forgets the old one.
+    if (options.keepSaved !== true) clearSavedProfile(storage, nodeKey);
     state.profile = null;
     state.ready = false;
     state.address = null;
@@ -521,6 +730,8 @@ export function createDemo(backend: Backend) {
     state,
     refresh,
     createAccount,
+    useExistingLedgerAccount,
+    restore,
     openSession,
     closeSession,
     runAction,

@@ -23,6 +23,7 @@ import { DEFAULT_FEE_DROPS } from "../constants";
 import type { Demo, Profile } from "../demo";
 import type { NetworkStore } from "../network-store";
 import type { Backend, KeyHandle, TxJson } from "../ports";
+import type { PasskeyCredential } from "@carbs/sessions";
 import type { PasskeyMaterial } from "./passkey";
 import {
   DEMO_ACCOUNT,
@@ -47,6 +48,11 @@ export interface PasskeySource {
   create(): Promise<KeyHandle>;
   /** The passkey and its authenticator, for a live wallet that signs through `@carbs/sessions`. */
   material(): Promise<PasskeyMaterial>;
+  /**
+   * A passkey made before a page reload, by credential id and public key; absent where the
+   * authenticator does not outlive the page (the software one).
+   */
+  restore?(credential: PasskeyCredential): PasskeyMaterial;
 }
 
 type Listener = (data: unknown) => void;

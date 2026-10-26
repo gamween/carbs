@@ -127,6 +127,12 @@ export function browserPasskeySource(): PasskeySource {
       createBrowserPasskey(navigator.credentials, { id: location.hostname, name: "carbs" }),
     material: () =>
       createBrowserCredential(navigator.credentials, { id: location.hostname, name: "carbs" }),
+    // The platform authenticator keeps the private key; the page needs only its id to ask again.
+    restore: (credential) => ({
+      credential,
+      authenticator: browserAuthenticator(navigator.credentials),
+      rpId: location.hostname,
+    }),
   };
 }
 

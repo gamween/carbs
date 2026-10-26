@@ -65,6 +65,32 @@ describe("Account screen", () => {
     expect(codesIn(wrapper)).toEqual(["tesSUCCESS", "tesSUCCESS", "tesSUCCESS"]);
   });
 
+  it("names the buttons for what they do: a new Mac account, the Ledger's own account", () => {
+    const { wrapper } = mountScreen(AccountScreen);
+    expect(wrapper.get("[data-testid='create-mac']").text()).toBe("Create a new Mac account");
+    expect(wrapper.get("[data-testid='create-ledger']").text()).toBe("Set up the Ledger account");
+    expect(wrapper.get("[data-testid='use-ledger']").text()).toBe("Use the account already set up");
+    expect(wrapper.get("[data-testid='ledger-account-note']").text()).toContain(
+      "simulated Stax makes new keys at each setup",
+    );
+  });
+
+  it("uses the Ledger account already set up, sending nothing", async () => {
+    const { wrapper, ctx } = mountScreen(AccountScreen);
+    await wrapper.get("[data-testid='use-ledger']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-testid='error']").text()).toContain("set it up first");
+    await wrapper.get("[data-testid='create-ledger']").trigger("click");
+    await flushPromises();
+    const address = ctx.demo.state.address;
+    await wrapper.get("[data-testid='use-ledger']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-testid='error']").exists()).toBe(false);
+    expect(ctx.demo.state.address).toBe(address);
+    expect(ctx.demo.state.ready).toBe(true);
+    expect(codesIn(wrapper)).toEqual([]);
+  });
+
   it("shows a rejection on the device and sends nothing", async () => {
     const { wrapper, ctx } = mountScreen(AccountScreen, { autoApprove: false });
     ctx.sim.simDevice.setApprover(async () => false);

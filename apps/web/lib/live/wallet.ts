@@ -14,14 +14,16 @@ import {
   createSessionKey,
   generateClassicSeed,
   generateMlDsaSeed,
+  hexToBytes,
   mlDsaSignerFromSeed,
   signTransaction,
   signWithPasskey,
   type BytesSigner,
   type Definitions,
 } from "@carbs/sessions";
-import type { KeyAlgorithm, KeyHandle, WalletPort } from "../ports";
+import type { KeyAlgorithm, KeyHandle, PasskeyRef, WalletPort } from "../ports";
 import type { PasskeySource } from "../wallets/adapters";
+import type { PasskeyMaterial } from "../wallets/passkey";
 import { fromCoreTx } from "./result";
 
 function handleFor(algorithm: KeyAlgorithm, signer: BytesSigner, defs: Definitions): KeyHandle {
@@ -37,11 +39,24 @@ function handleFor(algorithm: KeyAlgorithm, signer: BytesSigner, defs: Definitio
 
 export class LiveWallet implements WalletPort {
   readonly mode = "live" as const;
+  /** Only where the passkey source can find a passkey again after a reload (the browser's). */
+  readonly restorePasskey?: (passkey: PasskeyRef) => KeyHandle;
 
   constructor(
     private readonly defs: Definitions,
     private readonly passkeys: PasskeySource,
-  ) {}
+  ) {
+    const restore = passkeys.restore;
+    if (restore !== undefined) {
+      this.restorePasskey = (passkey) =>
+        this.passkeyHandle(
+          restore({
+            credentialId: hexToBytes(passkey.credentialId),
+            publicKey: hexToBytes(passkey.publicKey),
+          }),
+        );
+    }
+  }
 
   async createMasterKey(): Promise<KeyHandle> {
     const signer = classicSignerFromSeed(generateClassicSeed("ecdsa-secp256k1"));
@@ -49,7 +64,10 @@ export class LiveWallet implements WalletPort {
   }
 
   async createPasskey(): Promise<KeyHandle> {
-    const { credential, authenticator, rpId } = await this.passkeys.material();
+    return this.passkeyHandle(await this.passkeys.material());
+  }
+
+  private passkeyHandle({ credential, authenticator, rpId }: PasskeyMaterial): KeyHandle {
     const defs = this.defs;
     return {
       algorithm: "p256",

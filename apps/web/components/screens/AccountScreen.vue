@@ -63,12 +63,20 @@ const simulated = computed(() => backend.mode === "simulated");
 async function create(profile: Profile): Promise<void> {
   await demo.createAccount(profile, { passkeyOnly: profile === "mac" && passkeyOnly.value });
 }
+
+/** The Ledger account is the device's own: the same Stax always gives the same address. */
+const ledgerAccountNote = computed(() =>
+  backend.device.mode === "simulated"
+    ? "The simulated Stax makes new keys at each setup, so each setup is a new account."
+    : "The account is the Stax's own address: the same device always gives the same account. One already set up is used as it is, with nothing sent.",
+);
 </script>
 
 <template>
   <section>
     <ScreenHeader eyebrow="Account" title="Two kinds of account">
-      Pick a profile and create a fresh account. Everything below is read back from the node.
+      Pick a profile. A Mac account is new each time; a Ledger account is the device's own.
+      Everything below is read back from the node.
     </ScreenHeader>
 
     <div class="grid gap-5 md:grid-cols-2">
@@ -97,14 +105,32 @@ async function create(profile: Profile): Promise<void> {
           </template>
         </p>
         <LedgerDevicePicker v-if="profile.id === 'ledger' && backend.mode === 'live'" />
-        <button
-          class="btn btn-primary"
-          :disabled="state.busy || (profile.id === 'ledger' && ledgerBlocked)"
-          :data-testid="`create-${profile.id}`"
-          @click="create(profile.id)"
+        <p
+          v-if="profile.id === 'ledger'"
+          class="text-sm text-muted-foreground"
+          data-testid="ledger-account-note"
         >
-          Create a fresh {{ profile.id === "mac" ? "Mac" : "Ledger" }} account
-        </button>
+          {{ ledgerAccountNote }}
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <button
+            class="btn btn-primary"
+            :disabled="state.busy || (profile.id === 'ledger' && ledgerBlocked)"
+            :data-testid="`create-${profile.id}`"
+            @click="create(profile.id)"
+          >
+            {{ profile.id === "mac" ? "Create a new Mac account" : "Set up the Ledger account" }}
+          </button>
+          <button
+            v-if="profile.id === 'ledger'"
+            class="btn"
+            :disabled="state.busy || ledgerBlocked"
+            data-testid="use-ledger"
+            @click="demo.useExistingLedgerAccount()"
+          >
+            Use the account already set up
+          </button>
+        </div>
       </article>
     </div>
 

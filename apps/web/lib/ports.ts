@@ -236,6 +236,12 @@ export interface WalletPort {
   createPasskey(): Promise<KeyHandle>;
   /** A fresh key for one session; never reused. */
   createSessionKey(algorithm: "p256" | "mldsa44"): Promise<KeyHandle>;
+  /**
+   * A passkey made before a page reload, from its public key and credential id (the
+   * authenticator still holds the private key). Absent where the authenticator does not
+   * outlive the page (the software authenticator, the simulation).
+   */
+  restorePasskey?(passkey: PasskeyRef): KeyHandle;
 }
 
 export type ExposureStatus = "exposed" | "no-exposure-found" | "unknown";
